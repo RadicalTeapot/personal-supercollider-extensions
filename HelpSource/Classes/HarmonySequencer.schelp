@@ -1,0 +1,45 @@
+TITLE:: HarmonySequencer
+SUMMARY:: Harmony bloom VST clone
+CATEGORIES::Sequencer>VST clone
+
+DESCRIPTION::
+
+This is a clone of the Harmony bloom VST sequencer.
+
+CLASSMETHODS::
+
+METHOD::new
+ARGUMENT::server
+Supercollider server
+RETURNS::
+A new instance.
+
+INSTANCEMETHODS::
+
+METHOD::initializeValues
+Reset the sequencer to its default state.
+
+METHOD::loadPreset
+Load a preset.
+ARGUMENT::key
+The key of the preset to load.
+
+METHOD::presetKeys
+Get the preset keys array.
+
+METHOD::gui
+Show the GUI.
+ARGUMENT::refreshRate
+GUI refresh rate in FPS.
+
+PRIVATE::prSynthInit,prOscInit,prGetNotes
+
+EXAMPLES::
+
+code::
+s.boot // Boot the server
+
+h = HarmonySequencer.new(s, 30); // Create the sequencer
+h.gui(); // Show the GUI
+::
+
