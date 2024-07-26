@@ -1,16 +1,17 @@
 // TODO
-// Current performance is pretty bad, see performance test in project on how to improve (split point synthdef, generate new 
-// synthdefs for each trigger bar and update them when point count changes)
-// Implement presets
 // Validate data set with setters and set method (look at ControlSpec)
+// Implement presets
+// Debounce other controls (as they show late message when dragged) - also try to reduce debounce time to 10ms
 // prefix instance vars with i_, class vars with c_ and private methods with pr
 // Change how triggered points are rendered (maybe draw points smaller and have them get bigger, or just reduce the inner black part and always draw the outer edge
 // Fix bug when turning a trigger on, all points trigger right away
+// Fix points synth to use only named controls
 HarmonySequencer {
-    const maxTriggerCount = 8;
-    const maxPointCount = 16;
+    const maxTriggerCount = 16;
+    const maxPointCount = 32; // 64 make trigger SynthDef too heavy to load
     const uiUpdateOscPath = "/pointPosUpdate";
     const updatePointsTriggeredStateOscPath = "/triggerCrossing";
+    const c_debounceTime = 0.1;
 
     classvar quantizedValues;
     classvar quantizedLabels;
@@ -20,12 +21,18 @@ HarmonySequencer {
     classvar presets;
 
     var win;
-    var userView;
+    var i_userView;
+    var i_triggerCheckboxContainer = nil;
     var server;
     var pointsPos;
     var pointsTriggerState;
     var oscFuncs;
-    var pointsSynth;
+    var i_pointsSynth;
+    var i_pointsBus;
+    var i_currentTriggerSynths = #[];
+    var i_synthsToClear = #[];
+    var i_synthClearRoutine;
+    var i_nextDebounceAction = nil;
 
     var i_triggerCount = 0;
     var i_triggers = #[];
@@ -40,9 +47,7 @@ HarmonySequencer {
     var i_activePointCount = 0;
     var i_probability = 0;
 
-    *new {
-        |server|
-
+    *new { |server|
         // Initialize class vars
         quantizedValues = [0, 1/16, 1/8, 1/4, 1/2, 1.5/16, 1.5/8, 1.5/4, 1.5/2];
         quantizedLabels = ["0", "1/16", "1/8", "1/4", "1/2", "1/16d", "1/8d", "1/4d", "1/2d"];
@@ -64,8 +69,26 @@ HarmonySequencer {
         pointsPos = Array.fill(maxPointCount, 0);
         pointsTriggerState = Array.fill(maxPointCount, 0);
 
+        i_synthClearRoutine = Routine({
+            while ({i_synthsToClear.size > 0}) {
+                var removed = Array.new();
+                server.bind {
+                    i_synthsToClear.do { |synth, i| if (synth.isRunning) {
+                        synth.free;
+                        removed = removed.add(i);
+                    } };
+                    removed.reverseDo { |index| i_synthsToClear.removeAt(index) };
+                };
+                ("Cleared"+removed.size+"synth,"+i_synthsToClear.size+"left").postln;
+                server.latency.yield;
+            };
+            "Done clearing".postln;
+        });
+
         this.prSynthInit();
-        this.prOscInit();
+        this.registerPointTriggerAction({ |pointIdx, note|
+            pointsTriggerState[pointIdx] = 1.0;
+        });
         this.initializeValues();
 
         "Done initializing".postln;
@@ -106,44 +129,85 @@ HarmonySequencer {
     }
 
     prSynthInit {
-        SynthDef(\points, {
-            |globalOffset=0, bpm=60, triggerCount=8, probability=1, refreshRate=1, t_reset=0|
+        i_pointsBus = Bus.control(server, maxPointCount);
 
-            var quantizedOffsets = \quantizedOffsets.kr(Array.fill(maxPointCount, 0));
-            var fineOffsets = \fineOffsets.kr(Array.fill(maxPointCount, 0));
-            var speedOffsets = \speedOffsets.kr(Array.fill(maxPointCount, 0));
-            var triggers = \triggers.kr(Array.fill(maxTriggerCount, 0));
-            var activePoints = \activePoints.kr(Array.fill(maxPointCount, 1));
-            var notes = \notes.kr(Array.series(maxPointCount, 48, 1));
+        server.bind {
+            SynthDef(\points, {
+                |globalOffset=0, bpm=60, refreshRate=1, t_reset=0|
 
-            var freq = (bpm/60) * 0.25; // 1 beat to 1 bar
-            var rate = (freq + speedOffsets) * ControlDur.ir;
-            var sig = Phasor.kr(t_reset, rate) + quantizedOffsets + fineOffsets + globalOffset % 1;
+                var quantizedOffsets = \quantizedOffsets.kr(Array.fill(maxPointCount, 0));
+                var fineOffsets = \fineOffsets.kr(Array.fill(maxPointCount, 0));
+                var speedOffsets = \speedOffsets.kr(Array.fill(maxPointCount, 0));
 
-            // TODO This is bad for performance, see point comment on top of the file
-            triggers.do {|trigger, i|
-                var triggerCrossingTrig = Changed.kr(PulseCount.kr(sig - rate - (i/triggerCount) * trigger * activePoints * (i <= triggerCount)));
-                triggerCrossingTrig = triggerCrossingTrig * (TRand.kr(trig: triggerCrossingTrig) <= probability);
-                triggerCrossingTrig.do { |trig, j|
-                    SendReply.kr(trig,updatePointsTriggeredStateOscPath, [j, notes[j]]);
-                };
-            };
+                var freq = (bpm/60) * 0.25; // Assuming 4 beats per bar
+                var rate = (freq + speedOffsets) * ControlDur.ir;
+                var sig = Phasor.kr(t_reset, rate) + quantizedOffsets + fineOffsets + globalOffset % 1;
 
-            SendReply.kr(Impulse.kr(refreshRate), uiUpdateOscPath, sig);
-        }).send(server);
-        server.sync;
+                SendReply.kr(Impulse.kr(refreshRate), uiUpdateOscPath, sig);
+                Out.kr(i_pointsBus, sig - rate);
+            }).send(server);
+            server.sync;
 
-        pointsSynth = Synth(\points);
+            i_pointsSynth = Synth.head(server, \points);
+        };
 
         "Synth initialized".postln;
     }
 
-    prOscInit {
-        this.registerPointTriggerAction({ |pointIdx, note|
-            pointsTriggerState[pointIdx] = 1.0;
-        });
+    /** Create a new trigger synth
+    * offset: normalized trigger position (e.g., 0 for first, 3/8 for third of eight)
+    */
+    prAddTriggerSynth { |offset|
+        var synth, synthDef;
+        var synthName = ("trigger"++i_activePointCount).asSymbol;
+        var notes = this.prGetNotes();
 
-        "OSCFunc initialized".postln;
+        if (i_activePointCount < 1) {
+            ^nil;
+        };
+
+        // TODO use SynthDef.wrap to encapsulate duplicate code in SynthDefs below
+        if (i_activePointCount == 1)
+        {
+            synthDef = SynthDef(synthName, {
+                var note = \notes.kr(48);
+                var point = i_pointsBus.kr(1); // Doesn't work for 1 element (doesn't return an array)
+                var trigger = Changed.kr(PulseCount.kr(point - \offset.kr(0)));
+                var prob = TRand.kr(trig: trigger) <= \probability.kr(1);
+                SendReply.kr(trigger*prob, updatePointsTriggeredStateOscPath, [0, note]);
+            });
+        } {
+            synthDef = SynthDef(synthName, {
+                var notes = \notes.kr(Array.series(i_activePointCount, 48, 1));
+                var points = i_pointsBus.kr(i_activePointCount);
+                points.do { |point, i|
+                    var trigger = Changed.kr(PulseCount.kr(point - \offset.kr(0)));
+                    var prob = TRand.kr(trig: trigger) <= \probability.kr(1);
+                    SendReply.kr(trigger*prob, updatePointsTriggeredStateOscPath, [i, notes[i]]);
+                };
+            });
+        };
+        synth = synthDef.play(server, [probability: i_probability, notes: notes, offset: offset], addAction: \addToTail);
+        NodeWatcher.register(synth);
+
+        i_currentTriggerSynths = i_currentTriggerSynths.add(synth);
+    }
+
+    /** Recreate all trigger synths */
+    prRefreshTriggerSynths {
+        // Update synths to be cleared
+        i_synthsToClear = i_synthsToClear.addAll(i_currentTriggerSynths);
+        i_currentTriggerSynths = Array.new(maxTriggerCount);
+
+        // Create new synth
+        i_triggers.do {|trig, i|
+            if (trig) { this.prAddTriggerSynth(i/this.triggerCount) };
+        };
+
+        // Start clearing routine
+        if (i_synthClearRoutine.isPlaying.not) {
+            i_synthClearRoutine.reset.play;
+        }
     }
 
     registerPointTriggerAction { |action|
@@ -158,86 +222,97 @@ HarmonySequencer {
 
     triggerCount { ^i_triggerCount }
     triggerCount_ { |value|
-        i_triggerCount = value.clip(1, maxTriggerCount);
-        server.bind { pointsSynth.set(\triggerCount, this.triggerCount()) };
+        i_triggerCount = value.clip(1, maxTriggerCount).asInteger;
+        this.triggers_(this.triggers()); // update triggers array
+        defer { this.prCreateTriggerControls() }
     }
 
     triggers { ^i_triggers }
     triggers_ { |value|
-        var padded = value.clipExtend(value.size.min(maxTriggerCount)); // Limit length
-        i_triggers = padded ++ Array.fill(maxTriggerCount - padded.size, false); // Pad with false
-        server.bind { pointsSynth.set(\triggers, this.triggers().collect{|v| if (v, 1, 0) }) };
+        var padded = value.clipExtend(value.size.min(i_triggerCount)); // Limit length
+        i_triggers = padded ++ Array.fill(i_triggerCount - padded.size, false); // Pad with false
+        this.prRefreshTriggerSynths();
     }
 
     bpm { ^i_bpm }
     bpm_ { |value|
         i_bpm = value;
-        server.bind { pointsSynth.set(\bpm, i_bpm) };
+        server.bind { i_pointsSynth.set(\bpm, i_bpm) };
     }
 
     scaleIndex { ^i_scaleIdx }
     scaleIndex_ {|value|
         i_scaleIdx = value;
-        server.bind{ pointsSynth.set(\notes, this.prGetNotes()) };
+        server.bind {
+            i_currentTriggerSynths.do {|synth| synth.set(\notes, this.prGetNotes()) };
+        };
     }
 
     root { ^i_root }
     root_ {|value|
         i_root = value;
-        server.bind{ pointsSynth.set(\notes, this.prGetNotes()) };
+        server.bind {
+            i_currentTriggerSynths.do {|synth| synth.set(\notes, this.prGetNotes()) };
+        };
     }
 
     octave { ^i_octave }
     octave_ {|value|
         i_octave = value;
-        server.bind{ pointsSynth.set(\notes, this.prGetNotes()) };
+        server.bind {
+            i_currentTriggerSynths.do {|synth| synth.set(\notes, this.prGetNotes()) };
+        };
     }
 
     globalOffset { ^i_globalOffset }
     globalOffset_ {|value|
         i_globalOffset = value;
-        server.bind{ pointsSynth.set(\globalOffset, this.globalOffset()) };
+        server.bind{ i_pointsSynth.set(\globalOffset, this.globalOffset()) };
     }
 
     quantizedOffset { ^i_quantizedOffset }
     quantizedOffset_ {|value|
         i_quantizedOffset = value;
-        server.bind{ pointsSynth.set(\quantizedOffsets, Array.series(maxPointCount, step: quantizedValues[this.quantizedOffset()])) };
+        server.bind{ i_pointsSynth.set(\quantizedOffsets, Array.series(maxPointCount, step: quantizedValues[this.quantizedOffset()])) };
     }
 
     fineOffset { ^i_fineOffset }
     fineOffset_ {|value|
         i_fineOffset = value;
-        server.bind{ pointsSynth.set(\fineOffsets, Array.series(maxPointCount, step: this.fineOffset() * 0.1)) };
+        server.bind{ i_pointsSynth.set(\fineOffsets, Array.series(maxPointCount, step: this.fineOffset() * 0.1)) };
     }
 
     speedOffset { ^i_speedOffset }
     speedOffset_ {|value|
         i_speedOffset = value;
-        server.bind{ pointsSynth.set(\speedOffsets, Array.series(maxPointCount, step: this.speedOffset() * 0.1)) };
+        server.bind{ i_pointsSynth.set(\speedOffsets, Array.series(maxPointCount, step: this.speedOffset() * 0.1)) };
     }
 
     activePointCount { ^i_activePointCount }
     activePointCount_ {|value|
-        i_activePointCount = value.clip(1, maxPointCount);
-        server.bind{ pointsSynth.set(\activePoints, maxPointCount.collect{|i| if (i<this.activePointCount(), 1, 0) }) };
+        // Breaks when set to 1 or when scrolled too fast
+        i_activePointCount = value.clip(1, maxPointCount).asInteger;
+        this.prRefreshTriggerSynths();
     }
 
     probability { ^i_probability }
     probability_ {|value|
         i_probability = value;
-        server.bind{ pointsSynth.set(\probability, this.probability()) };
+        server.bind {
+            i_currentTriggerSynths.do {|synth| synth.set(\probability, this.probability()) };
+        };
     }
 
     prGetNotes{
-        ^maxPointCount.collect({|i| i_root + (12 * i_octave) + scales[i_scaleIdx].performDegreeToKey(i)})
+        ^i_activePointCount.collect({|i| i_root + (12 * i_octave) + scales[i_scaleIdx].performDegreeToKey(i)})
     }
 
     gui {
         |refreshRate = 30|
         var refreshOscFunc;
+        var debounceRoutine;
 
-        server.bind { pointsSynth.set(\refreshRate, refreshRate) };
+        server.bind { i_pointsSynth.set(\refreshRate, refreshRate) };
 
         if (win.notNil) {
             win.front;
@@ -246,17 +321,25 @@ HarmonySequencer {
 
         refreshOscFunc = OSCFunc({|msg|
             pointsPos = msg[3..];
-            defer { userView.refresh };
+            defer { i_userView.refresh };
         }, uiUpdateOscPath);
+
+        debounceRoutine = Routine { loop {
+            if (i_nextDebounceAction.notNil) {
+                i_nextDebounceAction.(); // Run the next function and reset the storage value
+                i_nextDebounceAction = nil;
+            };
+            c_debounceTime.yield;
+        }}.play;
 
         AppClock.sched(0, {
             var checkboxes;
 
             var width = 400, height = 200;
             var screen = Window.availableBounds;
-            win = Window.new("Harmony sequencer", Rect((screen.width - width)/2, (screen.height + height)/2, width, height)).onClose_({ refreshOscFunc.free });
+            win = Window.new("Harmony sequencer", Rect((screen.width - width)/2, (screen.height + height)/2, width, height)).onClose_({ refreshOscFunc.free; debounceRoutine.free; });
 
-            userView = UserView().background_(Color.white).drawFunc_({|view|
+            i_userView = UserView().background_(Color.white).drawFunc_({|view|
                 var width = view.bounds.width;
                 var height = view.bounds.height;
                 var step = width / this.triggerCount();
@@ -278,7 +361,7 @@ HarmonySequencer {
                     var xPos = pointsPos[i];
                     var yPos = (i+1) * pointHeightStep;
                     Pen.fillColor_(Color.gray(1.0-pointsTriggerState[i]));
-                    Pen.addArc(((xPos+16.reciprocal % 1.0) * width)@yPos, 3, 0, 2pi); // Shift xpos to match drawn line offset
+                    Pen.addArc(((xPos+(this.triggerCount*2).reciprocal % 1.0) * width)@yPos, 3, 0, 2pi); // Shift xpos to match drawn line offset
                     Pen.perform([\stroke, \fill][pointsTriggerState[i].ceil.asInteger]);
                 };
 
@@ -286,12 +369,7 @@ HarmonySequencer {
                 maxPointCount.do {|i| pointsTriggerState[i] = (pointsTriggerState[i] - 0.1).max(0.0);} // Fade over 10 frames
             });
 
-            checkboxes = this.triggerCount().collect {|i| CheckBox().value_(i_triggers[i]).action_({|checkbox|
-                var currentTriggers = this.triggers;
-                currentTriggers[i] = checkbox.value;
-                this.triggers_(currentTriggers);
-                userView.refresh;
-            }) };
+            this.prCreateTriggerControls();
 
             win.layout_(VLayout(
                 GridLayout.rows(
@@ -303,22 +381,43 @@ HarmonySequencer {
                     [StaticText().string_("Quantized offset"), PopUpMenu().items_(quantizedLabels).value_(this.quantizedOffset()).action_({|view| this.quantizedOffset_(view.value) })],
                     [StaticText().string_("Fine offset"), NumberBox().step_(0.01).scroll_step_(0.01).value_(this.fineOffset()).action_({|view| this.fineOffset_(view.value) })],
                     [StaticText().string_("Speed offset"), NumberBox().step_(0.01).scroll_step_(0.01).value_(this.speedOffset()).action_({|view| this.speedOffset_(view.value) })],
-                    [[Button().string_("Reset speed offset phase").mouseDownAction_({ server.bind { pointsSynth.set(\t_reset, 1)} }), columns: 2]],
+                    [[Button().string_("Reset speed offset phase").mouseDownAction_({ server.bind { i_pointsSynth.set(\t_reset, 1)} }), columns: 2]],
                     [StaticText().string_("Probability"), NumberBox().step_(0.01).scroll_step_(0.01).clipLo_(0.0).clipHi_(1.0).value_(this.probability()).action_({|view| this.probability_(view.value) })],
-                    [StaticText().string_("Point count"), NumberBox().step_(1).scroll_step_(1).clipLo_(1).clipHi_(maxPointCount).value_(this.activePointCount()).action_({|view| this.activePointCount_(view.value) })],
-                    [StaticText().string_("Trigger count"), NumberBox().step_(1).scroll_step_(1).clipLo_(1).clipHi_(maxTriggerCount).value_(this.triggerCount()).action_({|view| this.triggerCount_(view.value) })],
+                    [StaticText().string_("Point count"), NumberBox().step_(1).scroll_step_(1).clipLo_(1).clipHi_(maxPointCount).value_(this.activePointCount()).action_({|view| var value = view.value; i_nextDebounceAction = { this.activePointCount_(value) }; })],
+                    [StaticText().string_("Trigger count"), NumberBox().step_(1).scroll_step_(1).clipLo_(1).clipHi_(maxTriggerCount).value_(this.triggerCount()).action_({|view| var value = view.value; i_nextDebounceAction = { this.triggerCount_(value) }; })],
                 ),
-                [userView.minSize_(0@100), stretch:1],
-                HLayout(*checkboxes.collect {|view| [view, align: \center]})
+                [i_userView.minSize_(0@100), stretch:1],
+                i_triggerCheckboxContainer,
             ));
 
             win.front;
         });
     }
 
+    prCreateTriggerControls {
+        var checkboxes;
+
+        if (i_triggerCheckboxContainer.isNil) {
+            i_triggerCheckboxContainer = View();
+        } {
+            i_triggerCheckboxContainer.removeAll; // Clear all children
+        };
+
+        checkboxes = this.triggerCount().collect {|i| CheckBox().value_(this.triggers[i]).action_({|checkbox|
+            var currentTriggers = this.triggers;
+            currentTriggers[i] = checkbox.value;
+            this.triggers_(currentTriggers);
+            i_userView.refresh;
+        }) };
+
+        i_triggerCheckboxContainer.layout_(HLayout(*checkboxes.collect {|view| [view, align: \center]}));
+    }
+
     free {
-        pointsSynth.free;
+        i_pointsSynth.free;
         oscFuncs.do{ |func| func.free };
+        i_pointsBus.free;
+        i_currentTriggerSynths.do {|synth| synth.free };
         "Done freeing".postln;
     }
 }
