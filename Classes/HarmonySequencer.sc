@@ -1,14 +1,12 @@
 // TODO
-// Validate data set with setters and set method (look at ControlSpec)
 // Implement presets
 // Debounce other controls (as they show late message when dragged) - also try to reduce debounce time to 10ms
 // prefix instance vars with i_, class vars with c_ and private methods with pr
-// Change how triggered points are rendered (maybe draw points smaller and have them get bigger, or just reduce the inner black part and always draw the outer edge
-// Fix bug when turning a trigger on, all points trigger right away
 // Fix points synth to use only named controls
+// Once all is fixed, remove prints
 HarmonySequencer {
     const maxTriggerCount = 16;
-    const maxPointCount = 32; // 64 make trigger SynthDef too heavy to load
+    const maxPointCount = 32; // 64 makes trigger SynthDef too heavy to load (even if putting less code in the do loop) <- try splitting it into multiple synths when size is above 32
     const uiUpdateOscPath = "/pointPosUpdate";
     const updatePointsTriggeredStateOscPath = "/triggerCrossing";
     const c_debounceTime = 0.1;
@@ -20,7 +18,7 @@ HarmonySequencer {
     classvar rootLabels;
     classvar presets;
 
-    var win;
+    var i_window;
     var i_userView;
     var i_triggerCheckboxContainer = nil;
     var server;
@@ -29,28 +27,28 @@ HarmonySequencer {
     var oscFuncs;
     var i_pointsSynth;
     var i_pointsBus;
+    var i_synthClearRoutine;
     var i_currentTriggerSynths = #[];
     var i_synthsToClear = #[];
-    var i_synthClearRoutine;
     var i_nextDebounceAction = nil;
 
-    var i_triggerCount = 0;
-    var i_triggers = #[];
-    var i_bpm = 0;
-    var i_scaleIdx = 0;
-    var i_root = 0;
-    var i_octave = 0;
-    var i_globalOffset = 0;
-    var i_quantizedOffset = 0;
-    var i_fineOffset = 0;
-    var i_speedOffset = 0;
-    var i_activePointCount = 0;
-    var i_probability = 0;
+    var i_triggerCount;
+    var i_triggers;
+    var i_bpm;
+    var i_scaleIdx;
+    var i_root;
+    var i_octave;
+    var i_globalOffset;
+    var i_quantizedOffset;
+    var i_fineOffset;
+    var i_speedOffset;
+    var i_activePointCount;
+    var i_probability;
 
     *new { |server|
         // Initialize class vars
         quantizedValues = [0, 1/16, 1/8, 1/4, 1/2, 1.5/16, 1.5/8, 1.5/4, 1.5/2];
-        quantizedLabels = ["0", "1/16", "1/8", "1/4", "1/2", "1/16d", "1/8d", "1/4d", "1/2d"];
+        quantizedLabels = ["None", "16th", "8th", "Quarter", "Half", "Dotted 16th", "Dotted 8", "Dotted quarter", "Dotted half"];
         scales = [Scale.chromatic, Scale.majorPentatonic, Scale.minorPentatonic, Scale.ionian, Scale.dorian, Scale.phrygian, Scale.lydian, Scale.mixolydian, Scale.aeolian, Scale.locrian];
         scaleLabels = ["chromatic", "minorPentatonic", "majorPentatonic", "ionian", "dorian", "phrygian", "lydian", "mixolydian", "aeolian", "locrian"];
         rootLabels = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
@@ -89,9 +87,42 @@ HarmonySequencer {
         this.registerPointTriggerAction({ |pointIdx, note|
             pointsTriggerState[pointIdx] = 1.0;
         });
+        this.prInitState();
         this.initializeValues();
 
         "Done initializing".postln;
+    }
+
+    prInitState {
+        // NOTE: Can use `value` and `isInteger` as those are already reserved by supercollider
+        i_triggerCount = (val: 1, spec: ControlSpec(1, maxTriggerCount, step: 1), isInt: true);
+        i_triggers = (val: []);
+        i_bpm = (val: 1, spec: ControlSpec(1, 240, step: 1), isInt: true);
+        i_scaleIdx = (val: 0, spec: ControlSpec(0, scales.size - 1, step: 1), isInt: true);
+        i_root = (val: 0, spec: ControlSpec(0, rootLabels.size - 1, step: 1), isInt: true);
+        i_octave = (val: 0, spec: ControlSpec(0, 10, step: 1), isInt: true);
+        i_globalOffset = (val: 0);
+        i_quantizedOffset = (val: 0, spec: ControlSpec(0, quantizedValues.size - 1, step: 1), isInt: true);
+        i_fineOffset = (val: 0);
+        i_speedOffset = (val: 0);
+        i_activePointCount = (val: 1, spec: ControlSpec(1, maxPointCount, step: 1), isInt: true);
+        i_probability = (val: 0, spec: ControlSpec(0.0, 1.0, step: 0.001));
+    }
+
+    prUpdateControlValue { |valueEvent, newValue|
+        if (valueEvent.spec.isNil) { 
+            valueEvent.val = newValue 
+        } {
+            valueEvent.val = valueEvent.spec.unmap(newValue);
+        }
+    }
+
+    prGetControlValue { |valueEvent|
+        var value;
+        if (valueEvent.spec.isNil) { ^valueEvent.val };
+        value = valueEvent.spec.map(valueEvent.val);
+        if (valueEvent.isInt.notNil && valueEvent.isInt) { ^value.asInteger; };
+        ^value;
     }
 
     initializeValues {
@@ -159,15 +190,16 @@ HarmonySequencer {
     */
     prAddTriggerSynth { |offset|
         var synth, synthDef;
-        var synthName = ("trigger"++i_activePointCount).asSymbol;
+        var activePointCount = this.activePointCount;
+        var synthName = ("trigger"++activePointCount).asSymbol;
         var notes = this.prGetNotes();
 
-        if (i_activePointCount < 1) {
+        if (activePointCount < 1) {
             ^nil;
         };
 
         // TODO use SynthDef.wrap to encapsulate duplicate code in SynthDefs below
-        if (i_activePointCount == 1)
+        if (activePointCount == 1)
         {
             synthDef = SynthDef(synthName, {
                 var note = \notes.kr(48);
@@ -178,8 +210,8 @@ HarmonySequencer {
             });
         } {
             synthDef = SynthDef(synthName, {
-                var notes = \notes.kr(Array.series(i_activePointCount, 48, 1));
-                var points = i_pointsBus.kr(i_activePointCount);
+                var notes = \notes.kr(Array.series(activePointCount, 48, 1));
+                var points = i_pointsBus.kr(activePointCount);
                 points.do { |point, i|
                     var trigger = Changed.kr(PulseCount.kr(point - \offset.kr(0)));
                     var prob = TRand.kr(trig: trigger) <= \probability.kr(1);
@@ -187,7 +219,7 @@ HarmonySequencer {
                 };
             });
         };
-        synth = synthDef.play(server, [probability: i_probability, notes: notes, offset: offset], addAction: \addToTail);
+        synth = synthDef.play(server, [probability: this.probability, notes: notes, offset: offset], addAction: \addToTail);
         NodeWatcher.register(synth);
 
         i_currentTriggerSynths = i_currentTriggerSynths.add(synth);
@@ -200,7 +232,7 @@ HarmonySequencer {
         i_currentTriggerSynths = Array.new(maxTriggerCount);
 
         // Create new synth
-        i_triggers.do {|trig, i|
+        this.triggers.do {|trig, i|
             if (trig) { this.prAddTriggerSynth(i/this.triggerCount) };
         };
 
@@ -220,102 +252,93 @@ HarmonySequencer {
         "Action registered".postln;
     }
 
-    triggerCount { ^i_triggerCount }
+    triggerCount { ^this.prGetControlValue(i_triggerCount) }
     triggerCount_ { |value|
-        i_triggerCount = value.clip(1, maxTriggerCount).asInteger;
-        this.triggers_(this.triggers()); // update triggers array
+        this.prUpdateControlValue(i_triggerCount, value);
+        this.triggers_(this.triggers); // update triggers array
         defer { this.prCreateTriggerControls() }
     }
 
-    triggers { ^i_triggers }
+    triggers { ^this.prGetControlValue(i_triggers) }
     triggers_ { |value|
-        var padded = value.clipExtend(value.size.min(i_triggerCount)); // Limit length
-        i_triggers = padded ++ Array.fill(i_triggerCount - padded.size, false); // Pad with false
+        var padded = value.clipExtend(value.size.min(this.triggerCount)); // Limit length // TODO <- Broken here
+        padded = padded ++ Array.fill(this.triggerCount - padded.size, false);
+        this.prUpdateControlValue(i_triggers, padded); // Pad with false
         this.prRefreshTriggerSynths();
     }
 
-    bpm { ^i_bpm }
+    bpm { ^this.prGetControlValue(i_bpm) }
     bpm_ { |value|
-        i_bpm = value;
-        server.bind { i_pointsSynth.set(\bpm, i_bpm) };
+        this.prUpdateControlValue(i_bpm, value);
+        server.bind { i_pointsSynth.set(\bpm, this.bpm) };
     }
 
-    scaleIndex { ^i_scaleIdx }
-    scaleIndex_ {|value|
-        i_scaleIdx = value;
-        server.bind {
-            i_currentTriggerSynths.do {|synth| synth.set(\notes, this.prGetNotes()) };
-        };
+    scaleIndex { ^this.prGetControlValue(i_scaleIdx) }
+    scaleIndex_ { |value|
+        this.prUpdateControlValue(i_scaleIdx, value);
+        server.bind { i_currentTriggerSynths.do { |synth| synth.set(\notes, this.prGetNotes) } };
     }
 
-    root { ^i_root }
-    root_ {|value|
-        i_root = value;
-        server.bind {
-            i_currentTriggerSynths.do {|synth| synth.set(\notes, this.prGetNotes()) };
-        };
+    root { ^this.prGetControlValue(i_root) }
+    root_ { |value|
+        this.prUpdateControlValue(i_root, value);
+        server.bind { i_currentTriggerSynths.do { |synth| synth.set(\notes, this.prGetNotes) } };
     }
 
-    octave { ^i_octave }
-    octave_ {|value|
-        i_octave = value;
-        server.bind {
-            i_currentTriggerSynths.do {|synth| synth.set(\notes, this.prGetNotes()) };
-        };
+    octave { ^this.prGetControlValue(i_octave) }
+    octave_ { |value|
+        this.prUpdateControlValue(i_octave, value);
+        server.bind { i_currentTriggerSynths.do { |synth| synth.set(\notes, this.prGetNotes) } };
     }
 
-    globalOffset { ^i_globalOffset }
-    globalOffset_ {|value|
-        i_globalOffset = value;
-        server.bind{ i_pointsSynth.set(\globalOffset, this.globalOffset()) };
+    globalOffset { ^this.prGetControlValue(i_globalOffset) }
+    globalOffset_ { |value|
+        this.prUpdateControlValue(i_globalOffset, value);
+        server.bind{ i_pointsSynth.set(\globalOffset, this.globalOffset) };
     }
 
-    quantizedOffset { ^i_quantizedOffset }
-    quantizedOffset_ {|value|
-        i_quantizedOffset = value;
-        server.bind{ i_pointsSynth.set(\quantizedOffsets, Array.series(maxPointCount, step: quantizedValues[this.quantizedOffset()])) };
+    quantizedOffset { ^this.prGetControlValue(i_quantizedOffset) }
+    quantizedOffset_ { |value|
+        this.prUpdateControlValue(i_quantizedOffset, value);
+        server.bind{ i_pointsSynth.set(\quantizedOffsets, Array.series(maxPointCount, step: quantizedValues[this.quantizedOffset])) };
     }
 
-    fineOffset { ^i_fineOffset }
-    fineOffset_ {|value|
-        i_fineOffset = value;
-        server.bind{ i_pointsSynth.set(\fineOffsets, Array.series(maxPointCount, step: this.fineOffset() * 0.1)) };
+    fineOffset { ^this.prGetControlValue(i_fineOffset) }
+    fineOffset_ { |value|
+        this.prUpdateControlValue(i_fineOffset, value);
+        server.bind{ i_pointsSynth.set(\fineOffsets, Array.series(maxPointCount, step: this.fineOffset * 0.1)) };
     }
 
-    speedOffset { ^i_speedOffset }
-    speedOffset_ {|value|
-        i_speedOffset = value;
-        server.bind{ i_pointsSynth.set(\speedOffsets, Array.series(maxPointCount, step: this.speedOffset() * 0.1)) };
+    speedOffset { ^this.prGetControlValue(i_speedOffset) }
+    speedOffset_ { |value|
+        this.prUpdateControlValue(i_speedOffset, value);
+        server.bind{ i_pointsSynth.set(\speedOffsets, Array.series(maxPointCount, step: this.speedOffset * 0.1)) };
     }
 
-    activePointCount { ^i_activePointCount }
-    activePointCount_ {|value|
-        // Breaks when set to 1 or when scrolled too fast
-        i_activePointCount = value.clip(1, maxPointCount).asInteger;
+    activePointCount { ^this.prGetControlValue(i_activePointCount) }
+    activePointCount_ { |value|
+        this.prUpdateControlValue(i_activePointCount, value);
         this.prRefreshTriggerSynths();
     }
 
-    probability { ^i_probability }
-    probability_ {|value|
-        i_probability = value;
-        server.bind {
-            i_currentTriggerSynths.do {|synth| synth.set(\probability, this.probability()) };
-        };
+    probability { ^this.prGetControlValue(i_probability) }
+    probability_ { |value|
+        this.prUpdateControlValue(i_probability, value);
+        server.bind { i_currentTriggerSynths.do { |synth| synth.set(\probability, this.probability) } };
     }
 
     prGetNotes{
-        ^i_activePointCount.collect({|i| i_root + (12 * i_octave) + scales[i_scaleIdx].performDegreeToKey(i)})
+        ^this.activePointCount.collect({ |i| this.root + (12 * this.octave) + scales[this.scaleIndex].performDegreeToKey(i)})
     }
 
-    gui {
-        |refreshRate = 30|
+    gui { |refreshRate = 30|
         var refreshOscFunc;
         var debounceRoutine;
 
         server.bind { i_pointsSynth.set(\refreshRate, refreshRate) };
 
-        if (win.notNil) {
-            win.front;
+        if (i_window.notNil) {
+            i_window.front;
             ^nil;
         };
 
@@ -337,13 +360,14 @@ HarmonySequencer {
 
             var width = 400, height = 200;
             var screen = Window.availableBounds;
-            win = Window.new("Harmony sequencer", Rect((screen.width - width)/2, (screen.height + height)/2, width, height)).onClose_({ refreshOscFunc.free; debounceRoutine.free; });
+            i_window = Window.new("Harmony sequencer", Rect((screen.width - width)/2, (screen.height + height)/2, width, height)).onClose_({ refreshOscFunc.free; debounceRoutine.free; });
 
             i_userView = UserView().background_(Color.white).drawFunc_({|view|
                 var width = view.bounds.width;
                 var height = view.bounds.height;
                 var step = width / this.triggerCount();
                 var pointHeightStep = height / (this.activePointCount()+1);
+                var pointRadius = 3;
 
                 // Draw trigger bars
                 Pen.strokeColor_(Color.black);
@@ -358,11 +382,12 @@ HarmonySequencer {
 
                 // Draw points
                 this.activePointCount().do { |i|
-                    var xPos = pointsPos[i];
+                    var xPos = (pointsPos[i] + (this.triggerCount*2).reciprocal) % 1.0; // Shift xpos to match drawn line offset
                     var yPos = (i+1) * pointHeightStep;
-                    Pen.fillColor_(Color.gray(1.0-pointsTriggerState[i]));
-                    Pen.addArc(((xPos+(this.triggerCount*2).reciprocal % 1.0) * width)@yPos, 3, 0, 2pi); // Shift xpos to match drawn line offset
-                    Pen.perform([\stroke, \fill][pointsTriggerState[i].ceil.asInteger]);
+                    Pen.addArc((xPos * width)@yPos, pointRadius, 0, 2pi);
+                    Pen.stroke;
+                    Pen.addArc((xPos * width)@yPos, pointRadius * pointsTriggerState[i] * 2, 0, 2pi);
+                    Pen.fill;
                 };
 
                 // Reset all points trigger crossing state
@@ -371,7 +396,7 @@ HarmonySequencer {
 
             this.prCreateTriggerControls();
 
-            win.layout_(VLayout(
+            i_window.layout_(VLayout(
                 GridLayout.rows(
                     [StaticText().string_("BPM"), NumberBox().step_(1).clipLo_(1).value_(this.bpm()).action_({|view| this.bpm_(view.value) })],
                     [StaticText().string_("Scale"), PopUpMenu().items_(scaleLabels).value_(this.scaleIndex()).action_({|view| this.scaleIndex_(view.value) })],
@@ -390,7 +415,7 @@ HarmonySequencer {
                 i_triggerCheckboxContainer,
             ));
 
-            win.front;
+            i_window.front;
         });
     }
 
