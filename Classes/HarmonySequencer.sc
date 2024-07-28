@@ -2,6 +2,10 @@
 // Implement presets
 // Debounce other controls (as they show late message when dragged) - also try to reduce debounce time to 10ms
 // Fix points synth to use only named controls
+// Add position and speed jitter controls
+// Add randomize and lock controls for most parameters
+// Add notes from chords controls
+// Add control to rotate note assignment to points
 // Write docs
 HarmonySequencer {
     const c_maxTriggerCount = 16;
@@ -27,6 +31,7 @@ HarmonySequencer {
     var i_oscFuncs;
     var i_pointsSynth;
     var i_pointsBus;
+    var i_notesBus;
     var i_synthClearRoutine;
     var i_currentTriggerSynths = #[];
     var i_synthsToClear = #[];
@@ -48,7 +53,7 @@ HarmonySequencer {
     *new { |server, debug=false|
         // Initialize class vars
         cv_quantizedValues = [0, 1/16, 1/8, 1/4, 1/2, 1.5/16, 1.5/8, 1.5/4, 1.5/2];
-        cv_quantizedLabels = ["None", "16th", "8th", "Quarter", "Half", "Dotted 16th", "Dotted 8", "Dotted quarter", "Dotted half"];
+        cv_quantizedLabels = ["None", "16th", "8th", "Quarter", "Half", "Dotted 16th", "Dotted 8th", "Dotted quarter", "Dotted half"];
         cv_scales = [Scale.chromatic, Scale.majorPentatonic, Scale.minorPentatonic, Scale.ionian, Scale.dorian, Scale.phrygian, Scale.lydian, Scale.mixolydian, Scale.aeolian, Scale.locrian];
         cv_scaleLabels = ["chromatic", "minorPentatonic", "majorPentatonic", "ionian", "dorian", "phrygian", "lydian", "mixolydian", "aeolian", "locrian"];
         cv_rootLabels = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
@@ -84,6 +89,7 @@ HarmonySequencer {
             this.prDebugPrint("Done clearing");
         });
 
+        i_notesBus = Bus.control(i_server, c_maxPointCount);
         this.prInitializePointsSynth();
         this.registerPointTriggerAction({ |pointIdx, note|
             i_pointsTriggerState[pointIdx] = 1.0;
@@ -197,7 +203,6 @@ HarmonySequencer {
     prRefreshTriggerSynths {
         var activePointCount = this.activePointCount;
         var synthName = ("trigger"++activePointCount).asSymbol;
-        var notes = this.prGetNotes();
 
         if (activePointCount < 1) {
             ^nil;
@@ -210,7 +215,7 @@ HarmonySequencer {
             if (activePointCount == 1)
             {
                 SynthDef(synthName, {
-                    var note = \notes.kr(48);
+                    var note = i_notesBus.kr(1);
                     var point = i_pointsBus.kr(1); // Doesn't work for 1 element (doesn't return an array)
                     // NOTE: Use Changed and PulseCount to avoid all points triggering when SynthDef is created
                     var trigger = Changed.kr(PulseCount.kr(point - \offset.kr(0)));
@@ -219,7 +224,7 @@ HarmonySequencer {
                 }).add;
             } {
                 SynthDef(synthName, {
-                    var notes = \notes.kr(Array.series(activePointCount, 48, 1));
+                    var notes = i_notesBus.kr(activePointCount);
                     var points = i_pointsBus.kr(activePointCount);
                     points.do { |point, i|
                         // NOTE: Use Changed and PulseCount to avoid all points triggering when SynthDef is created
@@ -238,7 +243,7 @@ HarmonySequencer {
 
             this.triggers.do { |trig, i|
                 if (trig) { i_currentTriggerSynths= i_currentTriggerSynths.add(Synth.tail(
-                    i_server, synthName, [probability: this.probability, notes: notes, offset: i/this.triggerCount]
+                    i_server, synthName, [probability: this.probability, offset: i/this.triggerCount]
                 )) };
             };
 
@@ -290,19 +295,19 @@ HarmonySequencer {
     scaleIndex { ^this.prGetControlValue(i_scaleIdx) }
     scaleIndex_ { |value|
         this.prUpdateControlValue(i_scaleIdx, value);
-        i_server.bind { i_currentTriggerSynths.do { |synth| synth.set(\notes, this.prGetNotes) } };
+        this.prUpdateNotesBus();
     }
 
     root { ^this.prGetControlValue(i_root) }
     root_ { |value|
         this.prUpdateControlValue(i_root, value);
-        i_server.bind { i_currentTriggerSynths.do { |synth| synth.set(\notes, this.prGetNotes) } };
+        this.prUpdateNotesBus();
     }
 
     octave { ^this.prGetControlValue(i_octave) }
     octave_ { |value|
         this.prUpdateControlValue(i_octave, value);
-        i_server.bind { i_currentTriggerSynths.do { |synth| synth.set(\notes, this.prGetNotes) } };
+        this.prUpdateNotesBus();
     }
 
     globalOffset { ^this.prGetControlValue(i_globalOffset) }
@@ -341,8 +346,12 @@ HarmonySequencer {
         i_server.bind { i_currentTriggerSynths.do { |synth| synth.set(\probability, this.probability) } };
     }
 
-    prGetNotes{
-        ^this.activePointCount.collect({ |i| this.root + (12 * this.octave) + cv_scales[this.scaleIndex].performDegreeToKey(i)})
+    /** Update notes bus */
+    prUpdateNotesBus{
+        var notes = this.activePointCount.collect({ |i| 
+            this.root + (12 * this.octave) + cv_scales[this.scaleIndex].performDegreeToKey(i);
+        });
+        i_notesBus.setnSynchronous(notes);
     }
 
     gui { |refreshRate = 30|
@@ -456,6 +465,7 @@ HarmonySequencer {
         i_pointsSynth.free;
         i_oscFuncs.do{ |func| func.free };
         i_pointsBus.free;
+        i_notesBus.free;
         i_currentTriggerSynths.do {|synth| synth.free };
         this.prDebugPrint("Done freeing");
     }
