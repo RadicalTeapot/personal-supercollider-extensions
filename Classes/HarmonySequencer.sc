@@ -6,7 +6,7 @@
 // Once all is fixed, remove prints
 HarmonySequencer {
     const maxTriggerCount = 16;
-    const maxPointCount = 32; // 64 makes trigger SynthDef too heavy to load (even if putting less code in the do loop) <- try splitting it into multiple synths when size is above 32
+    const maxPointCount = 64;
     const uiUpdateOscPath = "/pointPosUpdate";
     const updatePointsTriggeredStateOscPath = "/triggerCrossing";
     const c_debounceTime = 0.1;
@@ -189,7 +189,7 @@ HarmonySequencer {
     * offset: normalized trigger position (e.g., 0 for first, 3/8 for third of eight)
     */
     prAddTriggerSynth { |offset|
-        var synth, synthDef;
+        var synth;
         var activePointCount = this.activePointCount;
         var synthName = ("trigger"++activePointCount).asSymbol;
         var notes = this.prGetNotes();
@@ -198,31 +198,34 @@ HarmonySequencer {
             ^nil;
         };
 
-        // TODO use SynthDef.wrap to encapsulate duplicate code in SynthDefs below
-        if (activePointCount == 1)
-        {
-            synthDef = SynthDef(synthName, {
-                var note = \notes.kr(48);
-                var point = i_pointsBus.kr(1); // Doesn't work for 1 element (doesn't return an array)
-                var trigger = Changed.kr(PulseCount.kr(point - \offset.kr(0)));
-                var prob = TRand.kr(trig: trigger) <= \probability.kr(1);
-                SendReply.kr(trigger*prob, updatePointsTriggeredStateOscPath, [0, note]);
-            });
-        } {
-            synthDef = SynthDef(synthName, {
-                var notes = \notes.kr(Array.series(activePointCount, 48, 1));
-                var points = i_pointsBus.kr(activePointCount);
-                points.do { |point, i|
+        fork {
+            // TODO use SynthDef.wrap to encapsulate duplicate code in SynthDefs below
+            if (activePointCount == 1)
+            {
+                SynthDef(synthName, {
+                    var note = \notes.kr(48);
+                    var point = i_pointsBus.kr(1); // Doesn't work for 1 element (doesn't return an array)
                     var trigger = Changed.kr(PulseCount.kr(point - \offset.kr(0)));
                     var prob = TRand.kr(trig: trigger) <= \probability.kr(1);
-                    SendReply.kr(trigger*prob, updatePointsTriggeredStateOscPath, [i, notes[i]]);
-                };
-            });
-        };
-        synth = synthDef.play(server, [probability: this.probability, notes: notes, offset: offset], addAction: \addToTail);
-        NodeWatcher.register(synth);
+                    SendReply.kr(trigger*prob, updatePointsTriggeredStateOscPath, [0, note]);
+                }).add;
+            } {
+                SynthDef(synthName, {
+                    var notes = \notes.kr(Array.series(activePointCount, 48, 1));
+                    var points = i_pointsBus.kr(activePointCount);
+                    points.do { |point, i|
+                        var trigger = Changed.kr(PulseCount.kr(point - \offset.kr(0)));
+                        var prob = TRand.kr(trig: trigger) <= \probability.kr(1);
+                        SendReply.kr(trigger*prob, updatePointsTriggeredStateOscPath, [i, notes[i]]);
+                    };
+                }).add;
+            };
+            server.sync;
+            synth = Synth.tail(server, synthName, [probability: this.probability, notes: notes, offset: offset]);
+            NodeWatcher.register(synth);
 
-        i_currentTriggerSynths = i_currentTriggerSynths.add(synth);
+            i_currentTriggerSynths = i_currentTriggerSynths.add(synth);
+        }
     }
 
     /** Recreate all trigger synths */
