@@ -21,6 +21,7 @@ HarmonySequencer {
     classvar cv_scaleLabels;
     classvar cv_rootLabels;
     classvar cv_presets;
+    classvar cv_parameterNames;
 
     var i_debugMode;
     var i_window;
@@ -38,18 +39,8 @@ HarmonySequencer {
     var i_synthsToClear = #[];
     var i_nextDebounceAction = nil;
 
-    var i_triggerCount;
-    var i_triggers;
-    var i_bpm;
-    var i_scaleIdx;
-    var i_root;
-    var i_octave;
-    var i_globalOffset;
-    var i_quantizedOffset;
-    var i_fineOffset;
-    var i_speedOffset;
-    var i_activePointCount;
-    var i_probability;
+    var i_parameters = nil;
+    var i_parameterUiControls = nil;
 
     *new { |server, debug=false|
         // Initialize class vars
@@ -61,6 +52,20 @@ HarmonySequencer {
         cv_presets = Dictionary.newFrom([
             default: [8, [true, false, false, false, false, false, false, false], ]
         ]);
+        cv_parameterNames = (
+            triggerCount: \triggerCount,
+            triggers: \triggers,
+            bpm: \bpm,
+            scaleIndex: \scaleIndex,
+            rootIndex: \rootIndex,
+            octave: \octave,
+            globalOffset: \globalOffset,
+            quantizedOffsetIndex: \quantizedOffsetIndex,
+            fineOffset: \fineOffset,
+            speedOffset: \speedOffset,
+            activePointCount: \activePointCount,
+            probability: \probability,
+        );
 
         ^super.new.init(server, debug);
     }
@@ -115,18 +120,20 @@ HarmonySequencer {
         var setWithoutSpec = { |self, value| self.prValue = value };
         var getWithoutSpec = { |self| self.prValue };
 
-        i_triggerCount = (prValue: 1, spec: ControlSpec(1, c_maxTriggerCount, step: 1), setter: setIntWithSpec, getter: getIntWithSpec);
-        i_triggers = (prValue: [], setter: setWithoutSpec, getter: getWithoutSpec);
-        i_bpm = (prValue: 1, spec: ControlSpec(1, 240, step: 1), setter: setIntWithSpec, getter: getIntWithSpec);
-        i_scaleIdx = (prValue: 0, spec: ControlSpec(0, cv_scales.size - 1, step: 1), setter: setIntWithSpec, getter: getIntWithSpec);
-        i_root = (prValue: 0, spec: ControlSpec(0, cv_rootLabels.size - 1, step: 1), setter: setIntWithSpec, getter: getIntWithSpec);
-        i_octave = (prValue: 0, spec: ControlSpec(0, 10, step: 1), uiControl: nil, label: "Octave", setter: setIntWithSpec, getter: getIntWithSpec);
-        i_globalOffset = (prValue: 0, setter: setWithoutSpec, getter: getWithoutSpec);
-        i_quantizedOffset = (prValue: 0, spec: ControlSpec(0, cv_quantizedValues.size - 1, step: 1), setter: setIntWithSpec, getter: getIntWithSpec);
-        i_fineOffset = (prValue: 0, setter: setWithoutSpec, getter: getWithoutSpec);
-        i_speedOffset = (prValue: 0, setter: setWithoutSpec, getter: getWithoutSpec);
-        i_activePointCount = (prValue: 0, spec: ControlSpec(1, c_maxPointCount, step: 1), setter: setIntWithSpec, getter: getIntWithSpec);
-        i_probability = (prValue: 0, spec: ControlSpec(0.0, 1.0, step: 0.001), setter: setFloatWithSpec, getter: getFloatWithSpec);
+        i_parameters = (
+            cv_parameterNames[\triggerCount]: (prValue: 1, spec: ControlSpec(1, c_maxTriggerCount, step: 1), setter: setIntWithSpec, getter: getIntWithSpec),
+            cv_parameterNames[\triggers]: (prValue: [], setter: setWithoutSpec, getter: getWithoutSpec),
+            cv_parameterNames[\bpm]: (prValue: 1, spec: ControlSpec(1, 240, step: 1), setter: setIntWithSpec, getter: getIntWithSpec),
+            cv_parameterNames[\scaleIndex]: (prValue: 0, spec: ControlSpec(0, cv_scales.size - 1, step: 1), setter: setIntWithSpec, getter: getIntWithSpec),
+            cv_parameterNames[\rootIndex]: (prValue: 0, spec: ControlSpec(0, cv_rootLabels.size - 1, step: 1), setter: setIntWithSpec, getter: getIntWithSpec),
+            cv_parameterNames[\octave]: (prValue: 0, spec: ControlSpec(0, 10, step: 1), uiControl: nil, label: "Octave", setter: setIntWithSpec, getter: getIntWithSpec),
+            cv_parameterNames[\globalOffset]: (prValue: 0, setter: setWithoutSpec, getter: getWithoutSpec),
+            cv_parameterNames[\quantizedOffsetIndex]: (prValue: 0, spec: ControlSpec(0, cv_quantizedValues.size - 1, step: 1), setter: setIntWithSpec, getter: getIntWithSpec),
+            cv_parameterNames[\fineOffset]: (prValue: 0, setter: setWithoutSpec, getter: getWithoutSpec),
+            cv_parameterNames[\speedOffset]: (prValue: 0, setter: setWithoutSpec, getter: getWithoutSpec),
+            cv_parameterNames[\activePointCount]: (prValue: 0, spec: ControlSpec(1, c_maxPointCount, step: 1), setter: setIntWithSpec, getter: getIntWithSpec),
+            cv_parameterNames[\probability]: (prValue: 0, spec: ControlSpec(0.0, 1.0, step: 0.001), setter: setFloatWithSpec, getter: getFloatWithSpec),
+        );
 
         this.prDebugPrint("Done initializing parameters");
     }
@@ -254,78 +261,90 @@ HarmonySequencer {
         this.prDebugPrint("Action registered");
     }
 
-    triggerCount { ^i_triggerCount.getter() }
+    prSetParameterValue { |parameterName, value|
+        i_parameters[parameterName].setter(value);
+        if (i_parameterUiControls.notNil) {
+            // NOTE: SC doesn't bail out early when chaining conditions so we need to split the check in two to avoid 
+            // errors if i_parameterUiControls is nil
+            if (i_parameterUiControls[parameterName].notNil) {
+                var value = i_parameters[parameterName].getter();
+                defer { i_parameterUiControls[parameterName].view.value_(value); }
+            }
+        }
+    }
+
+    triggerCount { ^i_parameters[cv_parameterNames.triggerCount].getter() }
     triggerCount_ { |value|
-        i_triggerCount.setter(value);
+        this.prSetParameterValue(cv_parameterNames.triggerCount, value);
         this.triggers_(this.triggers); // update triggers array
+    }
+
+    triggers { ^i_parameters[cv_parameterNames.triggers].getter() }
+    triggers_ { |value|
+        var padded = value.clipExtend(value.size.min(this.triggerCount));
+        padded = padded ++ Array.fill(this.triggerCount - padded.size, false);
+        this.prSetParameterValue(cv_parameterNames.triggers, padded);
+        this.prRefreshTriggerSynths();
         defer { this.prCreateTriggerControls() };
     }
 
-    triggers { ^i_triggers.getter() }
-    triggers_ { |value|
-        var padded = value.clipExtend(value.size.min(this.triggerCount)); // Limit length // TODO <- Broken here
-        padded = padded ++ Array.fill(this.triggerCount - padded.size, false);
-        i_triggers.setter(padded);
-        this.prRefreshTriggerSynths();
-    }
-
-    bpm { ^i_bpm.getter() }
+    bpm { ^i_parameters[cv_parameterNames.bpm].getter() }
     bpm_ { |value|
-        i_bpm.setter(value);
+        this.prSetParameterValue(cv_parameterNames.bpm, value);
         i_server.bind { i_pointsSynth.set(\bpm, this.bpm) };
     }
 
-    scaleIndex { ^i_scaleIdx.getter() }
+    scaleIndex { ^i_parameters[cv_parameterNames.scaleIndex].getter() }
     scaleIndex_ { |value|
-        i_scaleIdx.setter(value);
+        this.prSetParameterValue(cv_parameterNames.scaleIndex, value);
         this.prUpdateNotesBus();
     }
 
-    root { ^i_root.getter() }
+    root { ^i_parameters[cv_parameterNames.rootIndex].getter() }
     root_ { |value|
-        i_root.setter(value);
+        this.prSetParameterValue(cv_parameterNames.rootIndex, value);
         this.prUpdateNotesBus();
     }
 
-    octave { ^i_octave.getter() }
+    octave { ^i_parameters[cv_parameterNames.octave].getter() }
     octave_ { |value|
-        i_octave.setter(value);
+        this.prSetParameterValue(cv_parameterNames.octave, value);
         this.prUpdateNotesBus();
     }
 
-    globalOffset { ^i_globalOffset.getter() }
+    globalOffset { ^i_parameters[cv_parameterNames.globalOffset].getter() }
     globalOffset_ { |value|
-        i_globalOffset.setter(value);
+        this.prSetParameterValue(cv_parameterNames.globalOffset, value);
         i_server.bind{ i_pointsSynth.set(\globalOffset, this.globalOffset) };
     }
 
-    quantizedOffset { ^i_quantizedOffset.getter() }
+    quantizedOffset { ^i_parameters[cv_parameterNames.quantizedOffsetIndex].getter() }
     quantizedOffset_ { |value|
-        i_quantizedOffset.setter(value);
+        this.prSetParameterValue(cv_parameterNames.quantizedOffsetIndex, value);
         i_server.bind{ i_pointsSynth.set(\quantizedOffsets, Array.series(c_maxPointCount, step: cv_quantizedValues[this.quantizedOffset])) };
     }
 
-    fineOffset { ^i_fineOffset.getter() }
+    fineOffset { ^i_parameters[cv_parameterNames.fineOffset].getter() }
     fineOffset_ { |value|
-        i_fineOffset.setter(value);
+        this.prSetParameterValue(cv_parameterNames.fineOffset, value);
         i_server.bind{ i_pointsSynth.set(\fineOffsets, Array.series(c_maxPointCount, step: this.fineOffset * 0.1)) };
     }
 
-    speedOffset { ^i_speedOffset.getter() }
+    speedOffset { ^i_parameters[cv_parameterNames.speedOffset].getter() }
     speedOffset_ { |value|
-        i_speedOffset.setter(value);
+        this.prSetParameterValue(cv_parameterNames.speedOffset, value);
         i_server.bind{ i_pointsSynth.set(\speedOffsets, Array.series(c_maxPointCount, step: this.speedOffset * 0.1)) };
     }
 
-    activePointCount { ^i_activePointCount.getter() }
+    activePointCount { ^i_parameters[cv_parameterNames.activePointCount].getter() }
     activePointCount_ { |value|
-        i_activePointCount.setter(value);
+        this.prSetParameterValue(cv_parameterNames.activePointCount, value);
         this.prRefreshTriggerSynths();
     }
 
-    probability { ^i_probability.getter() }
+    probability { ^i_parameters[cv_parameterNames.probability].getter() }
     probability_ { |value|
-        i_probability.setter(value);
+        this.prSetParameterValue(cv_parameterNames.probability, value);
         i_server.bind { i_currentTriggerSynths.do { |synth| synth.set(\probability, this.probability) } };
     }
 
@@ -372,7 +391,7 @@ HarmonySequencer {
             i_userView = UserView().background_(Color.white).drawFunc_({|view|
                 var width = view.bounds.width;
                 var height = view.bounds.height;
-                var step = width / this.triggerCount();
+                var step = width / this.triggerCount;
                 var pointHeightStep = height / (this.activePointCount+1);
                 var pointRadius = 3;
 
@@ -406,18 +425,18 @@ HarmonySequencer {
 
             i_window.layout_(VLayout(
                 GridLayout.rows(
-                    [StaticText().string_("BPM"), NumberBox().step_(1).clipLo_(1).value_(this.bpm()).action_({|view| this.bpm_(view.value) })],
-                    [StaticText().string_("Scale"), PopUpMenu().items_(cv_scaleLabels).value_(this.scaleIndex()).action_({|view| this.scaleIndex_(view.value) })],
-                    [StaticText().string_("Root"), PopUpMenu().items_(cv_rootLabels).value_(this.root()).action_({|view| this.root_(view.value) })],
-                    this.prGetControlGridRow(i_octave),
-                    [StaticText().string_("Global offset"), NumberBox().step_(0.01).scroll_step_(0.01).value_(this.globalOffset()).action_({|view| this.globalOffset_(view.value)})],
-                    [StaticText().string_("Quantized offset"), PopUpMenu().items_(cv_quantizedLabels).value_(this.quantizedOffset()).action_({|view| this.quantizedOffset_(view.value) })],
-                    [StaticText().string_("Fine offset"), NumberBox().step_(0.01).scroll_step_(0.01).value_(this.fineOffset()).action_({|view| this.fineOffset_(view.value) })],
-                    [StaticText().string_("Speed offset"), NumberBox().step_(0.01).scroll_step_(0.01).value_(this.speedOffset()).action_({|view| this.speedOffset_(view.value) })],
+                    this.prGetControlGridRow(cv_parameterNames.bpm),
+                    this.prGetControlGridRow(cv_parameterNames.scaleIndex),
+                    this.prGetControlGridRow(cv_parameterNames.rootIndex),
+                    this.prGetControlGridRow(cv_parameterNames.octave),
+                    this.prGetControlGridRow(cv_parameterNames.globalOffset),
+                    this.prGetControlGridRow(cv_parameterNames.quantizedOffsetIndex),
+                    this.prGetControlGridRow(cv_parameterNames.fineOffset),
+                    this.prGetControlGridRow(cv_parameterNames.speedOffset),
                     [[Button().string_("Reset speed offset phase").mouseDownAction_({ i_server.bind { i_pointsSynth.set(\t_reset, 1)} }), columns: 2]],
-                    [StaticText().string_("Probability"), NumberBox().step_(0.01).scroll_step_(0.01).clipLo_(0.0).clipHi_(1.0).value_(this.probability()).action_({|view| this.probability_(view.value) })],
-                    [StaticText().string_("Point count"), NumberBox().step_(1).scroll_step_(1).clipLo_(1).clipHi_(c_maxPointCount).value_(this.activePointCount).action_({|view| var value = view.value; i_nextDebounceAction = { this.activePointCount_(value) }; })],
-                    [StaticText().string_("Trigger count"), NumberBox().step_(1).scroll_step_(1).clipLo_(1).clipHi_(c_maxTriggerCount).value_(this.triggerCount()).action_({|view| var value = view.value; i_nextDebounceAction = { this.triggerCount_(value) }; })],
+                    this.prGetControlGridRow(cv_parameterNames.activePointCount),
+                    this.prGetControlGridRow(cv_parameterNames.probability),
+                    this.prGetControlGridRow(cv_parameterNames.triggerCount)
                 ),
                 [i_userView.minSize_(0@100), stretch:1],
                 i_triggerCheckboxContainer,
@@ -428,13 +447,26 @@ HarmonySequencer {
     }
 
     prCreateParametersControls {
-        // TODO link values with spec
-        i_octave.uiControl = NumberBox().step_(1).scroll_step_(1).clipLo_(0).clipHi_(8).value_(this.octave).action_({|view| this.octave_(view.value) });
+        // TODO set bounds and steps using parameters spec?
+        i_parameterUiControls = (
+            cv_parameterNames[\bpm]: (label: "BPM", view: NumberBox().step_(1).scroll_step_(1).clipLo_(1).value_(this.bpm).action_({|view| this.bpm_(view.value) })),
+            cv_parameterNames[\scaleIndex]: (label: "Scale", view: PopUpMenu().items_(cv_scaleLabels).value_(this.scaleIndex).action_({|view| this.scaleIndex_(view.value) })),
+            cv_parameterNames[\rootIndex]: (label: "Root", view: PopUpMenu().items_(cv_rootLabels).value_(this.root).action_({|view| this.root_(view.value) })),
+            cv_parameterNames[\octave]: (label: "Octave", view: NumberBox().step_(1).scroll_step_(1).clipLo_(0).clipHi_(8).value_(this.octave).action_({|view| this.octave_(view.value) })),
+            cv_parameterNames[\globalOffset]: (label: "Global offset", view: NumberBox().step_(0.01).scroll_step_(0.01).value_(this.globalOffset).action_({|view| this.globalOffset_(view.value) })),
+            cv_parameterNames[\quantizedOffsetIndex]: (label: "Quantized offset", view: PopUpMenu().items_(cv_quantizedLabels).value_(this.quantizedOffset).action_({|view| this.quantizedOffset_(view.value) })),
+            cv_parameterNames[\fineOffset]: (label: "Fine offset", view: NumberBox().step_(0.01).scroll_step_(0.01).value_(this.fineOffset).action_({|view| this.fineOffset_(view.value) })),
+            cv_parameterNames[\speedOffset]: (label: "Speed offset", view: NumberBox().step_(0.01).scroll_step_(0.01).value_(this.speedOffset).action_({|view| this.speedOffset_(view.value) })),
+            cv_parameterNames[\probability]: (label: "Probability", view: NumberBox().step_(0.01).scroll_step_(0.01).clipLo_(0.0).clipHi_(1.0).value_(this.probability).action_({|view| this.probability_(view.value) })),
+            cv_parameterNames[\activePointCount]: (label: "Point count", view: NumberBox().step_(1).scroll_step_(1).clipLo_(1).clipHi_(c_maxPointCount).value_(this.activePointCount).action_({|view| this.activePointCount_(view.value) })),
+            cv_parameterNames[\triggerCount]: (label: "Trigger count", view: NumberBox().step_(1).scroll_step_(1).clipLo_(1).clipHi_(c_maxTriggerCount).value_(this.triggerCount).action_({|view| this.triggerCount_(view.value) })),
+        );
     }
 
-    prGetControlGridRow { |parameter|
+    prGetControlGridRow { |parameterName|
         // TODO Add randomize and lock controls
-        ^[StaticText().string_(parameter.label), parameter.uiControl];
+        var uiControl = i_parameterUiControls[parameterName];
+        ^[StaticText().string_(uiControl.label), uiControl.view];
     }
 
     prCreateTriggerControls {
@@ -446,7 +478,7 @@ HarmonySequencer {
             i_triggerCheckboxContainer.removeAll; // Clear all children
         };
 
-        checkboxes = this.triggerCount().collect {|i| CheckBox().value_(this.triggers[i]).action_({|checkbox|
+        checkboxes = this.triggerCount.collect {|i| CheckBox().value_(this.triggers[i]).action_({|checkbox|
             var currentTriggers = this.triggers;
             currentTriggers[i] = checkbox.value;
             this.triggers_(currentTriggers);
