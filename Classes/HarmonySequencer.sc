@@ -1,8 +1,6 @@
 // TODO
-// Finish linking parameters to ui controls
 // Implement presets
 // Debounce other controls (as they show late message when dragged) - also try to reduce debounce time to 10ms
-// Fix points synth to use only named controls
 // Add position and speed jitter controls
 // Add randomize and lock controls for most parameters
 // Add notes from chords controls
@@ -106,7 +104,9 @@ HarmonySequencer {
         this.prDebugPrint("Done initializing");
     }
 
-    /** Print text if debug mode is on */
+    /** Print text if debug mode is on
+    * @param text: text to print    
+    */
     prDebugPrint { |text|
         if (i_debugMode) { text.postln };
     }
@@ -168,8 +168,10 @@ HarmonySequencer {
 
         i_server.bind {
             SynthDef(\points, {
-                |globalOffset=0, bpm=60, refreshRate=1, t_reset=0|
-
+                var globalOffset = \globalOffset.kr(0);
+                var bpm = \bpm.kr(60);
+                var refreshRate = \refreshRate.kr(1);
+                var t_reset = \reset.tr(0);
                 var quantizedOffsets = \quantizedOffsets.kr(Array.fill(c_maxPointCount, 0));
                 var fineOffsets = \fineOffsets.kr(Array.fill(c_maxPointCount, 0));
                 var speedOffsets = \speedOffsets.kr(Array.fill(c_maxPointCount, 0));
@@ -261,6 +263,10 @@ HarmonySequencer {
         this.prDebugPrint("Action registered");
     }
 
+    /** Set parameter value and update UI if necessary
+    * @param parameterName: the name of the parameter (see cv_parameterNames)
+    * @param value: the value to set
+    */
     prSetParameterValue { |parameterName, value|
         i_parameters[parameterName].setter(value);
         if (i_parameterUiControls.notNil) {
@@ -433,7 +439,7 @@ HarmonySequencer {
                     this.prGetControlGridRow(cv_parameterNames.quantizedOffsetIndex),
                     this.prGetControlGridRow(cv_parameterNames.fineOffset),
                     this.prGetControlGridRow(cv_parameterNames.speedOffset),
-                    [[Button().string_("Reset speed offset phase").mouseDownAction_({ i_server.bind { i_pointsSynth.set(\t_reset, 1)} }), columns: 2]],
+                    [[Button().string_("Reset speed offset phase").mouseDownAction_({ i_server.bind { i_pointsSynth.set(\reset, 1)} }), columns: 2]],
                     this.prGetControlGridRow(cv_parameterNames.activePointCount),
                     this.prGetControlGridRow(cv_parameterNames.probability),
                     this.prGetControlGridRow(cv_parameterNames.triggerCount)
@@ -446,6 +452,7 @@ HarmonySequencer {
         });
     }
 
+    /** Create UI controls for parameters */
     prCreateParametersControls {
         // TODO set bounds and steps using parameters spec?
         i_parameterUiControls = (
@@ -463,6 +470,10 @@ HarmonySequencer {
         );
     }
 
+    /** Create a row of controls for a single parameter
+    * @param parameterName: the name of the parameter (see cv_parameterNames)
+    * @return [label, view]
+    */
     prGetControlGridRow { |parameterName|
         // TODO Add randomize and lock controls
         var uiControl = i_parameterUiControls[parameterName];
