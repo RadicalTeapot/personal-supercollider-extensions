@@ -1,7 +1,6 @@
 // TODO
 // Implement presets
 // Debounce other controls (as they show late message when dragged) - also try to reduce debounce time to 10ms
-// Add position and speed jitter controls
 // Add randomize and lock controls for most parameters
 // Add notes from chords controls
 // Add control to rotate note assignment to points
@@ -60,7 +59,11 @@ HarmonySequencer {
             globalOffset: \globalOffset,
             quantizedOffsetIndex: \quantizedOffsetIndex,
             fineOffset: \fineOffset,
+            fineOffsetJitterAmount: \fineOffsetJitterAmount,
+            fineOffsetJitterFrequency: \fineOffsetJitterFrequency,
             speedOffset: \speedOffset,
+            speedOffsetJitterAmount: \speedOffsetJitterAmount,
+            speedOffsetJitterFrequency: \speedOffsetJitterFrequency,
             activePointCount: \activePointCount,
             probability: \probability,
         );
@@ -105,7 +108,7 @@ HarmonySequencer {
     }
 
     /** Print text if debug mode is on
-    * @param text: text to print    
+    * @param text: text to print
     */
     prDebugPrint { |text|
         if (i_debugMode) { text.postln };
@@ -130,7 +133,11 @@ HarmonySequencer {
             cv_parameterNames[\globalOffset]: (prValue: 0, setter: setWithoutSpec, getter: getWithoutSpec),
             cv_parameterNames[\quantizedOffsetIndex]: (prValue: 0, spec: ControlSpec(0, cv_quantizedValues.size - 1, step: 1), setter: setIntWithSpec, getter: getIntWithSpec),
             cv_parameterNames[\fineOffset]: (prValue: 0, setter: setWithoutSpec, getter: getWithoutSpec),
+            cv_parameterNames[\fineOffsetJitterAmount]: (prValue: 0, setter: setWithoutSpec, getter: getWithoutSpec),
+            cv_parameterNames[\fineOffsetJitterFrequency]: (prValue: 0, setter: setWithoutSpec, getter: getWithoutSpec),
             cv_parameterNames[\speedOffset]: (prValue: 0, setter: setWithoutSpec, getter: getWithoutSpec),
+            cv_parameterNames[\speedOffsetJitterAmount]: (prValue: 0, setter: setWithoutSpec, getter: getWithoutSpec),
+            cv_parameterNames[\speedOffsetJitterFrequency]: (prValue: 0, setter: setWithoutSpec, getter: getWithoutSpec),
             cv_parameterNames[\activePointCount]: (prValue: 0, spec: ControlSpec(1, c_maxPointCount, step: 1), setter: setIntWithSpec, getter: getIntWithSpec),
             cv_parameterNames[\probability]: (prValue: 0, spec: ControlSpec(0.0, 1.0, step: 0.001), setter: setFloatWithSpec, getter: getFloatWithSpec),
         );
@@ -139,7 +146,9 @@ HarmonySequencer {
     }
 
     setParameterValues {
-        |triggerCount=8, triggers=#[true], bpm=110, scaleIndex=0, root=0, octave=4, globalOffset=0, quantizedOffset=0, fineOffset=0, speedOffset=0, activePointCount=8, probability=1|
+        |triggerCount=8, triggers=#[true], bpm=110, scaleIndex=0, root=0, octave=4, globalOffset=0, quantizedOffset=0,
+        fineOffset=0, fineOffsetJitterAmount=0, fineOffsetJitterFrequency=1, speedOffset=0, speedOffsetJitterAmount=0,
+        speedOffsetJitterFrequency=1, activePointCount=8, probability=1|
         this.triggerCount_(triggerCount);
         this.triggers_(triggers);
         this.bpm_(bpm);
@@ -149,7 +158,11 @@ HarmonySequencer {
         this.globalOffset_(globalOffset);
         this.quantizedOffset_(quantizedOffset);
         this.fineOffset_(fineOffset);
+        this.fineOffsetJitterAmount_(fineOffsetJitterAmount);
+        this.fineOffsetJitterFrequency_(fineOffsetJitterFrequency);
         this.speedOffset_(speedOffset);
+        this.speedOffsetJitterAmount_(speedOffsetJitterAmount);
+        this.speedOffsetJitterFrequency_(speedOffsetJitterFrequency);
         this.activePointCount_(activePointCount);
         this.probability_(probability);
     }
@@ -174,11 +187,15 @@ HarmonySequencer {
                 var t_reset = \reset.tr(0);
                 var quantizedOffsets = \quantizedOffsets.kr(Array.fill(c_maxPointCount, 0));
                 var fineOffsets = \fineOffsets.kr(Array.fill(c_maxPointCount, 0));
+                var fineOffsetJitterAmount = \fineOffsetJitterAmount.kr(0);
+                var fineOffsetJitterFrequency = \fineOffsetJitterFrequency.kr(1);
                 var speedOffsets = \speedOffsets.kr(Array.fill(c_maxPointCount, 0));
+                var speedOffsetJitterAmount = \speedOffsetJitterAmount.kr(0);
+                var speedOffsetJitterFrequency = \speedOffsetJitterFrequency.kr(1);
 
                 var freq = (bpm/60) * 0.25; // Assuming 4 beats per bar
-                var rate = (freq + speedOffsets) * ControlDur.ir;
-                var sig = Phasor.kr(t_reset, rate) + quantizedOffsets + fineOffsets + globalOffset % 1;
+                var rate = (freq + (speedOffsets + (LFNoise1.kr(speedOffsetJitterFrequency!c_maxPointCount) * speedOffsetJitterAmount))) * ControlDur.ir;
+                var sig = Phasor.kr(t_reset, rate) + quantizedOffsets + (fineOffsets + (LFNoise1.kr(fineOffsetJitterFrequency!c_maxPointCount) * fineOffsetJitterAmount)) + globalOffset % 1;
 
                 SendReply.kr(Impulse.kr(refreshRate), c_uiUpdateOscPath, sig);
                 Out.kr(i_pointsBus, sig - rate);
@@ -333,13 +350,37 @@ HarmonySequencer {
     fineOffset { ^i_parameters[cv_parameterNames.fineOffset].getter() }
     fineOffset_ { |value|
         this.prSetParameterValue(cv_parameterNames.fineOffset, value);
-        i_server.bind{ i_pointsSynth.set(\fineOffsets, Array.series(c_maxPointCount, step: this.fineOffset * 0.1)) };
+        i_server.bind{ i_pointsSynth.set(\fineOffsets, Array.series(c_maxPointCount, step: this.fineOffset * 0.05)) };
+    }
+
+    fineOffsetJitterAmount { ^i_parameters[cv_parameterNames.fineOffsetJitterAmount].getter() }
+    fineOffsetJitterAmount_ { |value|
+        this.prSetParameterValue(cv_parameterNames.fineOffsetJitterAmount, value);
+        i_server.bind{ i_pointsSynth.set(\fineOffsetJitterAmount, this.fineOffsetJitterAmount * 0.05) };
+    }
+
+    fineOffsetJitterFrequency { ^i_parameters[cv_parameterNames.fineOffsetJitterFrequency].getter() }
+    fineOffsetJitterFrequency_ { |value|
+        this.prSetParameterValue(cv_parameterNames.fineOffsetJitterFrequency, value);
+        i_server.bind{ i_pointsSynth.set(\fineOffsetJitterFrequency, this.fineOffsetJitterFrequency) };
     }
 
     speedOffset { ^i_parameters[cv_parameterNames.speedOffset].getter() }
     speedOffset_ { |value|
         this.prSetParameterValue(cv_parameterNames.speedOffset, value);
-        i_server.bind{ i_pointsSynth.set(\speedOffsets, Array.series(c_maxPointCount, step: this.speedOffset * 0.1)) };
+        i_server.bind{ i_pointsSynth.set(\speedOffsets, Array.series(c_maxPointCount, step: this.speedOffset * 0.01)) };
+    }
+
+    speedOffsetJitterAmount { ^i_parameters[cv_parameterNames.speedOffsetJitterAmount].getter() }
+    speedOffsetJitterAmount_ { |value|
+        this.prSetParameterValue(cv_parameterNames.speedOffsetJitterAmount, value);
+        i_server.bind{ i_pointsSynth.set(\speedOffsetJitterAmount, this.speedOffsetJitterAmount * 0.01) };
+    }
+
+    speedOffsetJitterFrequency { ^i_parameters[cv_parameterNames.speedOffsetJitterFrequency].getter() }
+    speedOffsetJitterFrequency_ { |value|
+        this.prSetParameterValue(cv_parameterNames.speedOffsetJitterFrequency, value);
+        i_server.bind{ i_pointsSynth.set(\speedOffsetJitterFrequency, this.speedOffsetJitterFrequency) };
     }
 
     activePointCount { ^i_parameters[cv_parameterNames.activePointCount].getter() }
@@ -363,7 +404,7 @@ HarmonySequencer {
         i_notesBus.setnSynchronous(notes);
     }
 
-    gui { |refreshRate = 30|
+    gui { |refreshRate = 30, showAdvancedGUI = false|
         var refreshOscFunc;
         var debounceRoutine;
 
@@ -388,7 +429,7 @@ HarmonySequencer {
         }}.play;
 
         AppClock.sched(0, {
-            var checkboxes;
+            var checkboxes, layoutRows;
 
             var width = 400, height = 200;
             var screen = Window.availableBounds;
@@ -429,21 +470,30 @@ HarmonySequencer {
             this.prCreateParametersControls();
             this.prCreateTriggerControls();
 
+            layoutRows = [
+                this.prGetControlGridRow(cv_parameterNames.bpm),
+                this.prGetControlGridRow(cv_parameterNames.scaleIndex),
+                this.prGetControlGridRow(cv_parameterNames.rootIndex),
+                this.prGetControlGridRow(cv_parameterNames.octave),
+                this.prGetControlGridRow(cv_parameterNames.globalOffset),
+                this.prGetControlGridRow(cv_parameterNames.quantizedOffsetIndex),
+                this.prGetControlGridRow(cv_parameterNames.fineOffset),
+                this.prGetControlGridRow(cv_parameterNames.speedOffset),
+                [[Button().string_("Reset speed offset phase").mouseDownAction_({ i_server.bind { i_pointsSynth.set(\reset, 1)} }), columns: 2]],
+                this.prGetControlGridRow(cv_parameterNames.activePointCount),
+                this.prGetControlGridRow(cv_parameterNames.probability),
+                this.prGetControlGridRow(cv_parameterNames.triggerCount)
+            ];
+
+            if (showAdvancedGUI) {
+                layoutRows = layoutRows.insert(7, this.prGetControlGridRow(cv_parameterNames.fineOffsetJitterAmount)); // After fine offset
+                layoutRows = layoutRows.insert(8, this.prGetControlGridRow(cv_parameterNames.fineOffsetJitterFrequency));
+                layoutRows = layoutRows.insert(10, this.prGetControlGridRow(cv_parameterNames.speedOffsetJitterAmount)); // After speed offset
+                layoutRows = layoutRows.insert(11, this.prGetControlGridRow(cv_parameterNames.speedOffsetJitterFrequency));
+            };
+
             i_window.layout_(VLayout(
-                GridLayout.rows(
-                    this.prGetControlGridRow(cv_parameterNames.bpm),
-                    this.prGetControlGridRow(cv_parameterNames.scaleIndex),
-                    this.prGetControlGridRow(cv_parameterNames.rootIndex),
-                    this.prGetControlGridRow(cv_parameterNames.octave),
-                    this.prGetControlGridRow(cv_parameterNames.globalOffset),
-                    this.prGetControlGridRow(cv_parameterNames.quantizedOffsetIndex),
-                    this.prGetControlGridRow(cv_parameterNames.fineOffset),
-                    this.prGetControlGridRow(cv_parameterNames.speedOffset),
-                    [[Button().string_("Reset speed offset phase").mouseDownAction_({ i_server.bind { i_pointsSynth.set(\reset, 1)} }), columns: 2]],
-                    this.prGetControlGridRow(cv_parameterNames.activePointCount),
-                    this.prGetControlGridRow(cv_parameterNames.probability),
-                    this.prGetControlGridRow(cv_parameterNames.triggerCount)
-                ),
+                GridLayout.rows(*layoutRows),
                 [i_userView.minSize_(0@100), stretch:1],
                 i_triggerCheckboxContainer,
             ));
@@ -463,7 +513,11 @@ HarmonySequencer {
             cv_parameterNames[\globalOffset]: (label: "Global offset", view: NumberBox().step_(0.01).scroll_step_(0.01).value_(this.globalOffset).action_({|view| this.globalOffset_(view.value) })),
             cv_parameterNames[\quantizedOffsetIndex]: (label: "Quantized offset", view: PopUpMenu().items_(cv_quantizedLabels).value_(this.quantizedOffset).action_({|view| this.quantizedOffset_(view.value) })),
             cv_parameterNames[\fineOffset]: (label: "Fine offset", view: NumberBox().step_(0.01).scroll_step_(0.01).value_(this.fineOffset).action_({|view| this.fineOffset_(view.value) })),
+            cv_parameterNames[\fineOffsetJitterAmount]: (label: "Fine offset jitter amount", view: NumberBox().step_(0.01).scroll_step_(0.01).value_(this.fineOffsetJitterAmount).action_({|view| this.fineOffsetJitterAmount_(view.value) })),
+            cv_parameterNames[\fineOffsetJitterFrequency]: (label: "Fine offset jitter frequency", view: NumberBox().step_(0.01).scroll_step_(0.01).value_(this.fineOffsetJitterFrequency).action_({|view| this.fineOffsetJitterFrequency_(view.value) })),
             cv_parameterNames[\speedOffset]: (label: "Speed offset", view: NumberBox().step_(0.01).scroll_step_(0.01).value_(this.speedOffset).action_({|view| this.speedOffset_(view.value) })),
+            cv_parameterNames[\speedOffsetJitterAmount]: (label: "Speed offset jitter amount", view: NumberBox().step_(0.01).scroll_step_(0.01).value_(this.speedOffsetJitterAmount).action_({|view| this.speedOffsetJitterAmount_(view.value) })),
+            cv_parameterNames[\speedOffsetJitterFrequency]: (label: "Speed offset jitter frequency", view: NumberBox().step_(0.01).scroll_step_(0.01).value_(this.speedOffsetJitterFrequency).action_({|view| this.speedOffsetJitterFrequency_(view.value) })),
             cv_parameterNames[\probability]: (label: "Probability", view: NumberBox().step_(0.01).scroll_step_(0.01).clipLo_(0.0).clipHi_(1.0).value_(this.probability).action_({|view| this.probability_(view.value) })),
             cv_parameterNames[\activePointCount]: (label: "Point count", view: NumberBox().step_(1).scroll_step_(1).clipLo_(1).clipHi_(c_maxPointCount).value_(this.activePointCount).action_({|view| this.activePointCount_(view.value) })),
             cv_parameterNames[\triggerCount]: (label: "Trigger count", view: NumberBox().step_(1).scroll_step_(1).clipLo_(1).clipHi_(c_maxTriggerCount).value_(this.triggerCount).action_({|view| this.triggerCount_(view.value) })),
