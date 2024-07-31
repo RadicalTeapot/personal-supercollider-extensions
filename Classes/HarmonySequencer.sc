@@ -1,5 +1,6 @@
 // TODO
-// Add velocity (ramp up, ramp down, set value, randomize)
+// Add velocity (ramp up, ramp down, set value, randomize) output with note value in OSC event
+// Add loop length control
 // Add start and stop
 // Add randomize and lock controls for most parameters
 // Add notes from chords controls
@@ -13,6 +14,10 @@ HarmonySequencer {
     const c_uiUpdateOscPath = "/pointPosUpdate";
     const c_updatePointsTriggeredStateOscPath = "/triggerCrossing";
     const c_debounceTime = 0.1;
+    const c_arrowUpKeycode = 38;
+    const c_arrowDownKeycode = 40;
+    const c_shiftModifier = 131072;
+    const c_leftMouseButton = 0;
 
     classvar cv_quantizedValues;
     classvar cv_quantizedLabels;
@@ -529,6 +534,73 @@ HarmonySequencer {
 
     /** Create UI controls for parameters */
     prCreateParametersControls {
+        var toMidiNoteString = {
+                var notes = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+                { |value| notes[value%12]+((value/12).asInteger - 2); };
+        }.();
+
+        // TODO Extract those to a method to avoid repeated code
+        var lowNoteControlDragging = false;
+        var lowNoteControlLastY = 0;
+        var lowNoteControl = NumberBox()
+            .string_(toMidiNoteString.(this.lowNote.asInteger))
+            .keyDownAction_({|view, char, modifiers, unicode, keycode, key|
+                    if (keycode == c_arrowUpKeycode) {this.lowNote_(this.lownote + 1)};
+                    if (keycode == c_arrowDownKeycode) {this.lowNote_(this.lowNote - 1)};
+                    view.string_(toMidiNoteString.(this.lowNote.asInteger));
+            })
+            .mouseDownAction_({|view, x, y, modifiers, button, clickCount|
+                    lowNoteControlDragging = (button==c_leftMouseButton);
+                    lowNoteControlLastY = y;
+                    true; // Mark event as processed
+            })
+            .mouseMoveAction_({|view, x, y, modifiers, button, clickCount|
+                    if (lowNoteControlDragging) {
+                        var dir = (y - lowNoteControlLastY) / 20;
+                        var speed = 1;
+                        if (modifiers == c_shiftModifier) { speed = 12 }; // If shift is pressed, jump an octave
+                        if (dir > 1) { this.lowNote_(this.lowNote - speed); lowNoteControlLastY = y; };
+                        if (dir < -1) { this.lowNote_(this.lowNote + speed); lowNoteControlLastY = y; };
+                };
+                    view.string_(toMidiNoteString.(this.lowNote.asInteger));
+                    true;
+            } )
+            .mouseUpAction_({|view, x, y, modifiers, button, clickCount|
+                    lowNoteControlDragging = false;
+                    true;
+            });
+
+        var highNoteControlDragging = false;
+        var highNoteControlLastY = 0;
+        var highNoteControl = NumberBox()
+            .string_(toMidiNoteString.(this.highNote.asInteger))
+            .keyDownAction_({|view, char, modifiers, unicode, keycode, key|
+                    if (keycode == c_arrowUpKeycode) {this.highNote_(this.highnote + 1)};
+                    if (keycode == c_arrowDownKeycode) {this.highNote_(this.highNote - 1)};
+                    view.string_(toMidiNoteString.(this.highNote.asInteger));
+            })
+            .mouseDownAction_({|view, x, y, modifiers, button, clickCount|
+                    highNoteControlDragging = (button==c_leftMouseButton);
+                    highNoteControlLastY = y;
+                    true; // Mark event as processed
+            })
+            .mouseMoveAction_({|view, x, y, modifiers, button, clickCount|
+                    if (highNoteControlDragging) {
+                        var dir = (y - highNoteControlLastY) / 20;
+                        var speed = 1;
+                        if (modifiers == c_shiftModifier) { speed = 12 }; // If shift is pressed, jump an octave
+                        if (dir > 1) { this.highNote_(this.highNote - speed); highNoteControlLastY = y; };
+                        if (dir < -1) { this.highNote_(this.highNote + speed); highNoteControlLastY = y; };
+                };
+                    view.string_(toMidiNoteString.(this.highNote.asInteger));
+                    true;
+            } )
+            .mouseUpAction_({|view, x, y, modifiers, button, clickCount|
+                    highNoteControlDragging = false;
+                    true;
+            });
+
+
         // TODO set bounds and steps using parameters spec?
         i_parameterUiControls = (
             cv_parameterNames[\bpm]: (label: "BPM", view: NumberBox().step_(1).scroll_step_(1).clipLo_(1).value_(this.bpm).action_({|view| this.bpm_(view.value) })),
@@ -546,8 +618,8 @@ HarmonySequencer {
             cv_parameterNames[\probability]: (label: "Probability", view: NumberBox().step_(0.01).scroll_step_(0.01).clipLo_(0.0).clipHi_(1.0).value_(this.probability).action_({|view| this.probability_(view.value) })),
             cv_parameterNames[\activePointCount]: (label: "Point count", view: NumberBox().step_(1).scroll_step_(1).clipLo_(1).clipHi_(c_maxPointCount).value_(this.activePointCount).action_({|view| this.activePointCount_(view.value) })),
             cv_parameterNames[\triggerCount]: (label: "Trigger count", view: NumberBox().step_(1).scroll_step_(1).clipLo_(1).clipHi_(c_maxTriggerCount).value_(this.triggerCount).action_({|view| this.triggerCount_(view.value) })),
-            cv_parameterNames[\lowNote]: (label: "Low note", view: NumberBox().step_(1).scroll_step_(1).clipLo_(0).clipHi_(127).decimals_(0).value_(this.lowNote).action_({|view| this.lowNote_(view.value) })),
-            cv_parameterNames[\highNote]: (label: "High note", view: NumberBox().step_(1).scroll_step_(1).clipLo_(0).clipHi_(127).decimals_(0).value_(this.highNote).action_({|view| this.highNote_(view.value) })),
+            cv_parameterNames[\lowNote]: (label: "Low note", view: lowNoteControl),
+            cv_parameterNames[\highNote]: (label: "High note", view: highNoteControl),
         );
     }
 
