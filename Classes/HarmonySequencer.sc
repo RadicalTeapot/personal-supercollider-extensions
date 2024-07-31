@@ -1,7 +1,5 @@
 // TODO
 // Add velocity (ramp up, ramp down, set value, randomize) output with note value in OSC event
-// Add loop length control
-// Add start and stop
 // Add randomize and lock controls for most parameters
 // Add notes from chords controls
 // Add control to rotate note assignment to points
@@ -60,6 +58,7 @@ HarmonySequencer {
             triggerCount: \triggerCount,
             triggers: \triggers,
             bpm: \bpm,
+            loopLength: \loopLength,
             scaleIndex: \scaleIndex,
             rootIndex: \rootIndex,
             octaveOffset: \octaveOffset,
@@ -75,6 +74,7 @@ HarmonySequencer {
             probability: \probability,
             lowNote: \lowNote,
             highNote: \highNote,
+            paused: \paused,
         );
 
         ^super.new.init(server, debug);
@@ -136,6 +136,7 @@ HarmonySequencer {
             cv_parameterNames[\triggerCount]: (prValue: 1, spec: ControlSpec(1, c_maxTriggerCount, step: 1), setter: setIntWithSpec, getter: getIntWithSpec),
             cv_parameterNames[\triggers]: (prValue: [], setter: setWithoutSpec, getter: getWithoutSpec),
             cv_parameterNames[\bpm]: (prValue: 1, spec: ControlSpec(1, 240, step: 1), setter: setIntWithSpec, getter: getIntWithSpec),
+            cv_parameterNames[\loopLength]: (prValue: 1, setter: { |self, value| self.prValue = value.max(0.001)}, getter: getWithoutSpec),
             cv_parameterNames[\scaleIndex]: (prValue: 0, spec: ControlSpec(0, cv_scales.size - 1, step: 1), setter: setIntWithSpec, getter: getIntWithSpec),
             cv_parameterNames[\rootIndex]: (prValue: 0, spec: ControlSpec(0, cv_rootLabels.size - 1, step: 1), setter: setIntWithSpec, getter: getIntWithSpec),
             cv_parameterNames[\octaveOffset]: (prValue: 0, spec: ControlSpec(-2, 2, step: 1), setter: setIntWithSpec, getter: getIntWithSpec),
@@ -151,18 +152,21 @@ HarmonySequencer {
             cv_parameterNames[\probability]: (prValue: 0, spec: ControlSpec(0.0, 1.0, step: 0.001), setter: setFloatWithSpec, getter: getFloatWithSpec),
             cv_parameterNames[\lowNote]: (prValue: 0, spec: ControlSpec(0, 127, step: 1), setter: setIntWithSpec, getter: getIntWithSpec),
             cv_parameterNames[\highNote]: (prValue: 0, spec: ControlSpec(0, 127, step: 1), setter: setIntWithSpec, getter: getIntWithSpec),
+            cv_parameterNames[\paused]: (prValue: false, setter: setWithoutSpec, getter: getWithoutSpec)
         );
 
         this.prDebugPrint("Done initializing parameters");
     }
 
     setParameterValues {
-        |triggerCount=8, triggers=#[true], bpm=110, scaleIndex=0, root=0, octaveOffset=0, globalOffset=0, quantizedOffset=0,
-        fineOffset=0, fineOffsetJitterAmount=0, fineOffsetJitterFrequency=1, speedOffset=0, speedOffsetJitterAmount=0,
-        speedOffsetJitterFrequency=1, activePointCount=8, probability=1, lowNote=0, highNote=127|
+        |triggerCount=8, triggers=#[true], bpm=110, loopLength=1, scaleIndex=0, root=0, octaveOffset=0, globalOffset=0,
+        quantizedOffset=0, fineOffset=0, fineOffsetJitterAmount=0, fineOffsetJitterFrequency=1, speedOffset=0,
+        speedOffsetJitterAmount=0, speedOffsetJitterFrequency=1, activePointCount=8, probability=1, lowNote=0,
+        highNote=127, paused=false|
         this.triggerCount_(triggerCount);
         this.triggers_(triggers);
         this.bpm_(bpm);
+        this.loopLength_(loopLength);
         this.scaleIndex_(scaleIndex);
         this.root_(root);
         this.octaveOffset_(octaveOffset);
@@ -178,6 +182,8 @@ HarmonySequencer {
         this.probability_(probability);
         this.lowNote_(lowNote);
         this.highNote_(highNote);
+        this.paused_(paused);
+        this.prDebugPrint("Done setting parameter values");
     }
 
     loadPreset { |key|
@@ -198,6 +204,7 @@ HarmonySequencer {
                 var bpm = \bpm.kr(60);
                 var refreshRate = \refreshRate.kr(1);
                 var t_reset = \reset.tr(0);
+                var loopLength = \loopLength.kr(1);
                 var quantizedOffsets = \quantizedOffsets.kr(Array.fill(c_maxPointCount, 0));
                 var fineOffsets = \fineOffsets.kr(Array.fill(c_maxPointCount, 0));
                 var fineOffsetJitterAmount = \fineOffsetJitterAmount.kr(0);
@@ -205,9 +212,10 @@ HarmonySequencer {
                 var speedOffsets = \speedOffsets.kr(Array.fill(c_maxPointCount, 0));
                 var speedOffsetJitterAmount = \speedOffsetJitterAmount.kr(0);
                 var speedOffsetJitterFrequency = \speedOffsetJitterFrequency.kr(1);
+                var paused = \paused.kr(0);
 
-                var freq = (bpm/60) * 0.25; // Assuming 4 beats per bar
-                var rate = (freq + (speedOffsets + (LFNoise1.kr(speedOffsetJitterFrequency!c_maxPointCount) * speedOffsetJitterAmount))) * ControlDur.ir;
+                var freq = (bpm/60) * 0.25 / loopLength; // Assuming 4 beats per bar
+                var rate = (freq + (speedOffsets + (LFNoise1.kr(speedOffsetJitterFrequency!c_maxPointCount) * speedOffsetJitterAmount))) * ControlDur.ir * (1 - paused);
                 var sig = Phasor.kr(t_reset, rate) + quantizedOffsets + (fineOffsets + (LFNoise1.kr(fineOffsetJitterFrequency!c_maxPointCount) * fineOffsetJitterAmount)) + globalOffset % 1;
 
                 SendReply.kr(Impulse.kr(refreshRate), c_uiUpdateOscPath, sig);
@@ -330,6 +338,12 @@ HarmonySequencer {
         i_server.bind { i_pointsSynth.set(\bpm, this.bpm) };
     }
 
+    loopLength { ^i_parameters[cv_parameterNames.loopLength].getter() }
+    loopLength_ { |value|
+        this.prSetParameterValue(cv_parameterNames.loopLength, value);
+        i_server.bind { i_pointsSynth.set(\loopLength, this.loopLength) };
+    }
+
     scaleIndex { ^i_parameters[cv_parameterNames.scaleIndex].getter() }
     scaleIndex_ { |value|
         this.prSetParameterValue(cv_parameterNames.scaleIndex, value);
@@ -421,6 +435,12 @@ HarmonySequencer {
         this.prUpdateNotesBus();
     }
 
+    paused { ^i_parameters[cv_parameterNames.paused].getter() }
+    paused_ { |value|
+        this.prSetParameterValue(cv_parameterNames.paused, value);
+        i_server.bind { i_pointsSynth.set(\paused, if (this.paused, 1, 0)) };
+    }
+
     /** Update notes bus */
     prUpdateNotesBus{
         var notes = this.activePointCount.collect({ |i|
@@ -500,6 +520,7 @@ HarmonySequencer {
 
             layoutRows = [
                 this.prGetControlGridRow(cv_parameterNames.bpm),
+                this.prGetControlGridRow(cv_parameterNames.loopLength),
                 this.prGetControlGridRow(cv_parameterNames.scaleIndex),
                 this.prGetControlGridRow(cv_parameterNames.rootIndex),
                 this.prGetControlGridRow(cv_parameterNames.octaveOffset),
@@ -526,6 +547,8 @@ HarmonySequencer {
                 GridLayout.rows(*layoutRows),
                 [i_userView.minSize_(0@100), stretch:1],
                 i_triggerCheckboxContainer,
+                HLayout(Button().string_("Play").mouseDownAction_({ this.paused_(false) }), Button().string_("Stop").mouseDownAction_({ this.paused_(true) }))
+                // [Button().string_("Toggle advanced GUI").mouseDownAction_({ showAdvancedGUI = !showAdvancedGUI }), stretch:1], // TODO Make this work by using a view container similar to i_triggerCheckboxContainer
             ));
 
             i_window.front;
@@ -604,6 +627,7 @@ HarmonySequencer {
         // TODO set bounds and steps using parameters spec?
         i_parameterUiControls = (
             cv_parameterNames[\bpm]: (label: "BPM", view: NumberBox().step_(1).scroll_step_(1).clipLo_(1).value_(this.bpm).action_({|view| this.bpm_(view.value) })),
+            cv_parameterNames[\loopLength]: (label: "Loop length", view: NumberBox().step_(1).scroll_step_(1).clipLo_(0.001).value_(this.loopLength).action_({|view| this.loopLength_(view.value) })),
             cv_parameterNames[\scaleIndex]: (label: "Scale", view: PopUpMenu().items_(cv_scaleLabels).value_(this.scaleIndex).action_({|view| this.scaleIndex_(view.value) })),
             cv_parameterNames[\rootIndex]: (label: "Root", view: PopUpMenu().items_(cv_rootLabels).value_(this.root).action_({|view| this.root_(view.value) })),
             cv_parameterNames[\octaveOffset]: (label: "Octave offset", view: NumberBox().step_(1).scroll_step_(1).clipLo_(-2).clipHi_(2).value_(this.octaveOffset).action_({|view| this.octaveOffset_(view.value) })),
