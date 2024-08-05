@@ -1,0 +1,48 @@
+TITLE:: Parameter
+SUMMARY::Value container with overridable getter and setter.
+CATEGORIES::Utility
+
+DESCRIPTION::
+Utility class for a value container with overridable getter and setter.
+
+CLASSMETHODS::
+
+METHOD::new
+Create a new instance.
+ARGUMENT::initialValue
+Initial value for the parameter.
+ARGUMENT::get
+Function overriding the parameter getter. Takes value as argument and should return a value.
+The returned value will be used when getting the parameter value.
+ARGUMENT::set
+Function overriding the parameter getter. Takes value as argument and should return a value.
+The returned value will be set as the parameter value.
+
+INSTANCEMETHODS::
+
+METHOD::value
+Sets or returns the parameter value.
+
+EXAMPLES::
+
+A simple parameter with no override getter or setter
+CODE::
+var parameter = Parameter(0);
+parameter.value.postln;
+parameter.value = 1;
+parameter.value.postln;
+::
+
+Overriding getter and setter
+CODE::
+var parameter =  Parameter(
+    initialValue: 0,
+    get: { |val| "Getting custom value".postln; val },
+    set: { |val| val.clip(1, 10).asInteger }
+);
+parameter.value.postln;
+parameter.value = 1.5462;
+parameter.value.postln;
+parameter.value = 20;
+parameter.value.postln;
+::
