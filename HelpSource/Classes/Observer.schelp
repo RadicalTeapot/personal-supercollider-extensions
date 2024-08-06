@@ -1,0 +1,46 @@
+TITLE:: Observer
+SUMMARY:: Execute a list of registered actions on a change.
+CATEGORIES:: Utility
+RELATED:: Classes/SimpleController, Classes/NotificationCenter
+
+DESCRIPTION::
+Utility class to register a list of actions to be executed when a change occurs.
+Objects that wish to be notified of a change must register an action in the Observer and will be
+notified when the change occurs.
+
+Order of execution is the same as order of registration.
+
+CLASSMETHODS::
+
+METHOD:: new
+Create a new instance.
+
+INSTANCEMETHODS::
+
+METHOD:: keys
+Returns all keys.
+
+METHOD:: register
+Register a new action to be executed.
+ARGUMENT:: key
+Key used to store the action. If key is already registered, it will overwrite the previous registration.
+ARGUMENT:: action
+Action to be executed when a change occurs, it should take the same arguments as passed to the notify method.
+
+METHOD:: unregister
+Unregister an action.
+ARGUMENT:: key
+Key of the action to unregister. Will have no effect if the key has not been registered.
+
+METHOD:: notify
+Execute all registered actions.
+ARGUMENT:: ... args
+Arguments to pass to the actions.
+
+EXAMPLES::
+
+CODE::
+var observer = Observer();
+observer.register(\one, { |value| ("Value has been updated to"+value).postln; });
+observer.notify(1);
+::

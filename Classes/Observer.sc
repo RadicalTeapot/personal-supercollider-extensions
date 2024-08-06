@@ -1,74 +1,36 @@
-ObserverWrapper {
-    var <key;
-    var i_notificationCallback;
+Observer {
+    var i_actions;
+    var i_orderedKeys;
 
-    *new { |key, notificationCallback|
-        ^super.new.init(key, notificationCallback);
+    *new { |model|
+        ^super.new.init(model);
     }
 
-    init { |itemKey, notificationCallback|
-        key = itemKey;
-        i_notificationCallback = notificationCallback;
+    init { |model|
+        i_actions = IdentityDictionary.new;
+        i_orderedKeys = List.new;
     }
 
-    value { |value|
-        i_notificationCallback.(value);
-    }
-}
+    keys { ^i_actions.keys }
 
-ObserverWrapperFactory {
-    *guiObserver { |key, guiItem|
-        ^ObserverWrapper(key, {|value| defer { guiItem.value_(value) } });
-    }
-}
-
-ObserverManager {
-    var i_observers;
-
-    *new {
-        ^super.new.init;
+    register { |key, action|
+        i_actions.put(key, action);
+        i_orderedKeys.add(key);
     }
 
-    init {
-        i_observers = IdentityDictionary.new;
-    }
-
-    prIsValidObserver { |observer|
-        ^(observer.respondsTo('key') && observer.respondsTo('value'));
-    }
-
-    addObserver { |key, observer|
-        var observerArray;
-
-        if (this.prIsValidObserver(observer).not) {
-            "Observer is not valid".error;
+    unregister { |key|
+        // Grab the index rather than checking in dictionary as it will be used later to update the list
+        var index = i_orderedKeys.indexOf(key);
+        if (index.isNil) {
+            ("Key"+key+"not registered for notification").warn;
             ^nil;
         };
 
-        observerArray = i_observers.atFail(key, {Array.new});
-        i_observers.put(key, observerArray.add(observer));
+        i_actions.removeAt(key);
+        i_orderedKeys.removeAt(index);
     }
 
-    removeObserver { |key, observer|
-        if (this.prIsValidObserver(observer).not) {
-            "Observer is not valid".error;
-            ^nil;
-        };
-
-        if (i_observers.includesKey(key).not) {
-            ("Key"+key+"not found in observer dictionary").error;
-            ^nil;
-        };
-
-        i_observers[key] = i_observers[key].reject { |item| item.key === observer.key };
-    }
-
-    notifyObservers { |key, value|
-        if (i_observers.includesKey(key).not) {
-            ("Key"+key+"not found in observer dictionary").warn;
-            ^nil;
-        };
-
-        i_observers[key].do { |observer| observer.value(value) };
+    notify { |...args|
+        i_orderedKeys.do { |key| i_actions[key].valueArray(args) };
     }
 }

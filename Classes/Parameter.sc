@@ -15,4 +15,7 @@ Parameter {
 
     value { ^i_get.(i_value) }
     value_ { |val| i_value = i_set.(val) }
+
+    get { ^this.value(); }
+    set{ |val| this.value_(val) }
 }
