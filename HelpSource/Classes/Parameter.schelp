@@ -18,7 +18,7 @@ ARGUMENT:: get
 Function overriding the parameter getter. Takes value as argument and should return a value.
 The returned value will be used when getting the parameter value.
 ARGUMENT:: set
-Function overriding the parameter getter. Takes value as argument and should return a value.
+Function overriding the parameter setter. Takes value as argument and should return a value.
 The returned value will be set as the parameter value.
 
 INSTANCEMETHODS::

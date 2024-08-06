@@ -7,10 +7,10 @@ Parameter {
         ^super.new.init(initialValue, get, set);
     }
 
-    init { |initialValue, getFunc, setFunc|
+    init { |initialValue, get, set|
         i_value = initialValue;
-        i_get = getFunc ? { |val| val };
-        i_set = setFunc ? { |val| val };
+        i_get = get ? { |val| val };
+        i_set = set ? { |val| val };
     }
 
     value { ^i_get.(i_value) }
@@ -18,4 +18,23 @@ Parameter {
 
     get { ^this.value(); }
     set{ |val| this.value_(val) }
+}
+
+ObservableParameter : Parameter {
+    var i_observer;
+
+    *new { |initialValue = 0, get = nil, set = nil|
+        ^super.new.init(initialValue, get, set);
+    }
+
+    init { |initialValue, get, set|
+        super.init(initialValue, get, set);
+        i_observer = Observer.new;
+    }
+
+    registeredKeys { ^i_observer.keys }
+    register { |key, action| i_observer.register(key, action) }
+    unregister { |key| i_observer.unregister(key) }
+
+    value_ { |val| super.value_(val); i_observer.notify(this.value()); }
 }

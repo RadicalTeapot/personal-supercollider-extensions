@@ -1,0 +1,60 @@
+TITLE:: ObservableParameter 
+SUMMARY:: Value container with overridable getter and setter and change notification.
+CATEGORIES:: Utility
+RELATED:: Classes/Parameter, Classes/Observer
+
+DESCRIPTION::
+Utility class for a value container with overridable getter and setter and change notification.
+
+When left to nil, getter and setter behaves as regular getter and setter.
+
+When set, the internal Observer executes its notify method with the new parameter value (after setter logic was
+executed).
+
+CLASSMETHODS::
+
+METHOD:: new
+Create a new instance.
+ARGUMENT:: initialValue
+Initial value for the parameter.
+ARGUMENT:: get
+Function overriding the parameter getter. Takes value as argument and should return a value.
+The returned value will be used when getting the parameter value.
+ARGUMENT:: set
+Function overriding the parameter setter. Takes value as argument and should return a value.
+The returned value will be set as the parameter value.
+
+INSTANCEMETHODS::
+
+METHOD:: value
+Set or return the parameter value, using overriden getter and setter if they were set.
+
+If parameter value is set, the internal Observer notify method gets executed.
+
+METHOD:: registeredKeys
+Returns a Set of all keys of the internal Observer.
+
+METHOD:: register
+Register a new action to be executed.
+ARGUMENT:: key
+Key used to store the action. If key is already registered, it will overwrite the previous registration.
+ARGUMENT:: action
+Action to be executed when the setter is called, it should take a value as an argument.
+
+METHOD:: unregister
+Unregister an action.
+ARGUMENT:: key
+Key of the action to unregister. Will have no effect if the key has not been registered.
+
+EXAMPLES::
+
+CODE::
+var p = ObservableParameter(0, {|val| val+1}, {|val| val.asInteger });
+p.register(\one, { |value| ("Value has been updated to"+value).postln; });
+p.get.postln;
+p.set(2.5346);
+p.get().postln;
+p.unregister(\one);
+p.set(3.5346);
+p.get().postln;
+::

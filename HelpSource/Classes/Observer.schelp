@@ -1,7 +1,7 @@
 TITLE:: Observer
 SUMMARY:: Execute a list of registered actions on a change.
 CATEGORIES:: Utility
-RELATED:: Classes/SimpleController, Classes/NotificationCenter
+RELATED:: Classes/ObservableParameter, Classes/SimpleController, Classes/NotificationCenter
 
 DESCRIPTION::
 Utility class to register a list of actions to be executed when a change occurs.
@@ -18,7 +18,7 @@ Create a new instance.
 INSTANCEMETHODS::
 
 METHOD:: keys
-Returns all keys.
+Returns a Set of all keys.
 
 METHOD:: register
 Register a new action to be executed.
