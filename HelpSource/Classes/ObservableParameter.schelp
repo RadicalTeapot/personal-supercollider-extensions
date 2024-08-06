@@ -1,4 +1,4 @@
-TITLE:: ObservableParameter 
+TITLE:: ObservableParameter
 SUMMARY:: Value container with overridable getter and setter and change notification.
 CATEGORIES:: Utility
 RELATED:: Classes/Parameter, Classes/Observer
@@ -8,7 +8,7 @@ Utility class for a value container with overridable getter and setter and chang
 
 When left to nil, getter and setter behaves as regular getter and setter.
 
-When set, the internal Observer executes its notify method with the new parameter value (after setter logic was
+When set, the internal link::Classes/Observer##Observer:: executes its notify method with the new parameter value (after setter logic was
 executed).
 
 CLASSMETHODS::
@@ -29,10 +29,10 @@ INSTANCEMETHODS::
 METHOD:: value
 Set or return the parameter value, using overriden getter and setter if they were set.
 
-If parameter value is set, the internal Observer notify method gets executed.
+If parameter value is set, the internal link::Classes/Observer##Observer:: notify method gets executed.
 
 METHOD:: registeredKeys
-Returns a Set of all keys of the internal Observer.
+Returns a link::Classes/Set##Set:: of all keys of the internal link::Classes/Observer##Observer::.
 
 METHOD:: register
 Register a new action to be executed.
@@ -41,10 +41,7 @@ Key used to store the action. If key is already registered, it will overwrite th
 ARGUMENT:: action
 Action to be executed when the setter is called, it should take a value as an argument.
 
-METHOD:: unregister
-Unregister an action.
-ARGUMENT:: key
-Key of the action to unregister. Will have no effect if the key has not been registered.
+COPYMETHOD:: Observer -unregister
 
 EXAMPLES::
 

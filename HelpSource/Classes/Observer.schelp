@@ -18,7 +18,7 @@ Create a new instance.
 INSTANCEMETHODS::
 
 METHOD:: keys
-Returns a Set of all keys.
+Returns a link::Classes/Set##Set:: of all keys.
 
 METHOD:: register
 Register a new action to be executed.
