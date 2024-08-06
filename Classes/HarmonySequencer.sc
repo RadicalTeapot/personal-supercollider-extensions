@@ -16,6 +16,8 @@ HarmonySequencer {
     const c_arrowDownKeycode = 40;
     const c_shiftModifier = 131072;
     const c_leftMouseButton = 0;
+    const c_parameterRegisterKey = \set;
+    const c_controlParameterRegisterKey = \uiSet;
 
     classvar cv_quantizedValues;
     classvar cv_quantizedLabels;
@@ -76,7 +78,6 @@ HarmonySequencer {
             highNote: \highNote,
             paused: \paused,
         );
-
         ^super.new.init(server, debug);
     }
 
@@ -125,35 +126,87 @@ HarmonySequencer {
 
     /** Initialize parameters state */
     prInitializeParameters {
-        var setIntWithSpec = { |self, value| self.prValue = self.spec.constrain(value).asInteger };
-        var getIntWithSpec = { |self| self.spec.constrain(self.prValue).asInteger };
-        var setFloatWithSpec = { |self, value| self.prValue = self.spec.constrain(value) };
-        var getFloatWithSpec = { |self| self.spec.constrain(self.prValue) };
-        var setWithoutSpec = { |self, value| self.prValue = value };
-        var getWithoutSpec = { |self| self.prValue };
+        var getObservableParamWithIntSpec = { |value, controlSpec|
+            ObservableParameter(
+                initialValue: value,
+                set: { |value| controlSpec.constrain(value).asInteger }
+            );
+        };
 
-        i_parameters = (
-            cv_parameterNames[\triggerCount]: (prValue: 1, spec: ControlSpec(1, c_maxTriggerCount, step: 1), setter: setIntWithSpec, getter: getIntWithSpec),
-            cv_parameterNames[\triggers]: (prValue: [], setter: setWithoutSpec, getter: getWithoutSpec),
-            cv_parameterNames[\bpm]: (prValue: 1, spec: ControlSpec(1, 240, step: 1), setter: setIntWithSpec, getter: getIntWithSpec),
-            cv_parameterNames[\loopLength]: (prValue: 1, setter: { |self, value| self.prValue = value.max(0.001)}, getter: getWithoutSpec),
-            cv_parameterNames[\scaleIndex]: (prValue: 0, spec: ControlSpec(0, cv_scales.size - 1, step: 1), setter: setIntWithSpec, getter: getIntWithSpec),
-            cv_parameterNames[\rootIndex]: (prValue: 0, spec: ControlSpec(0, cv_rootLabels.size - 1, step: 1), setter: setIntWithSpec, getter: getIntWithSpec),
-            cv_parameterNames[\octaveOffset]: (prValue: 0, spec: ControlSpec(-2, 2, step: 1), setter: setIntWithSpec, getter: getIntWithSpec),
-            cv_parameterNames[\globalOffset]: (prValue: 0, setter: setWithoutSpec, getter: getWithoutSpec),
-            cv_parameterNames[\quantizedOffsetIndex]: (prValue: 0, spec: ControlSpec(0, cv_quantizedValues.size - 1, step: 1), setter: setIntWithSpec, getter: getIntWithSpec),
-            cv_parameterNames[\fineOffset]: (prValue: 0, setter: setWithoutSpec, getter: getWithoutSpec),
-            cv_parameterNames[\fineOffsetJitterAmount]: (prValue: 0, setter: setWithoutSpec, getter: getWithoutSpec),
-            cv_parameterNames[\fineOffsetJitterFrequency]: (prValue: 0, setter: setWithoutSpec, getter: getWithoutSpec),
-            cv_parameterNames[\speedOffset]: (prValue: 0, setter: setWithoutSpec, getter: getWithoutSpec),
-            cv_parameterNames[\speedOffsetJitterAmount]: (prValue: 0, setter: setWithoutSpec, getter: getWithoutSpec),
-            cv_parameterNames[\speedOffsetJitterFrequency]: (prValue: 0, setter: setWithoutSpec, getter: getWithoutSpec),
-            cv_parameterNames[\activePointCount]: (prValue: 0, spec: ControlSpec(1, c_maxPointCount, step: 1), setter: setIntWithSpec, getter: getIntWithSpec),
-            cv_parameterNames[\probability]: (prValue: 0, spec: ControlSpec(0.0, 1.0, step: 0.001), setter: setFloatWithSpec, getter: getFloatWithSpec),
-            cv_parameterNames[\lowNote]: (prValue: 0, spec: ControlSpec(0, 127, step: 1), setter: setIntWithSpec, getter: getIntWithSpec),
-            cv_parameterNames[\highNote]: (prValue: 0, spec: ControlSpec(0, 127, step: 1), setter: setIntWithSpec, getter: getIntWithSpec),
-            cv_parameterNames[\paused]: (prValue: false, setter: setWithoutSpec, getter: getWithoutSpec)
-        );
+        var triggerCount = getObservableParamWithIntSpec.(1, ControlSpec(1, c_maxTriggerCount, step: 1)).register(c_parameterRegisterKey, { this.triggers_(this.triggers) });
+        var trigger = ObservableParameter([], set: { |value|
+                var padded = value.clipExtend(value.size.min(this.triggerCount));
+                padded ++ Array.fill(this.triggerCount - padded.size, false);
+            }).register(c_parameterRegisterKey, {
+            this.prRefreshTriggerSynths();
+            defer { this.prCreateTriggerControls() };
+        });
+        var bpm = getObservableParamWithIntSpec.(1, ControlSpec(1, 240, step: 1)).register(c_parameterRegisterKey, { |value|
+            i_server.bind { i_pointsSynth.set(\bpm, value) };
+        });
+        var loopLength = ObservableParameter(1, set: { |value| value.max(0.001) }).register(c_parameterRegisterKey, { |value|
+            i_server.bind { i_pointsSynth.set(\loopLength, value) };
+        });
+        var scaleIndex = getObservableParamWithIntSpec.(0, ControlSpec(0, cv_scales.size - 1, step: 1)).register(c_parameterRegisterKey, { this.prUpdateNotesBus() });
+        var root = getObservableParamWithIntSpec.(0, ControlSpec(0, cv_rootLabels.size - 1, step: 1)).register(c_parameterRegisterKey, { this.prUpdateNotesBus() });
+        var octaveOffset = getObservableParamWithIntSpec.(0, ControlSpec(-2, 2, step: 1)).register(c_parameterRegisterKey, { this.prUpdateNotesBus() });
+        var globalOffset = ObservableParameter(0).register(c_parameterRegisterKey, { |value|
+          i_server.bind{ i_pointsSynth.set(\globalOffset, value) }
+        });
+        var quantizedOffset = getObservableParamWithIntSpec.(0, ControlSpec(0, cv_quantizedValues.size - 1, step: 1)).register(c_parameterRegisterKey, { |value|
+          i_server.bind{ i_pointsSynth.set(\quantizedOffsets, Array.series(c_maxPointCount, step: cv_quantizedValues[value])) }
+        });
+        var fineOffset = ObservableParameter(0).register(c_parameterRegisterKey, { |value|
+          i_server.bind{ i_pointsSynth.set(\fineOffsets, Array.series(c_maxPointCount, step: value * 0.05)) }
+        });
+        var fineOffsetJitterAmount = ObservableParameter(0).register(c_parameterRegisterKey, { |value|
+          i_server.bind{ i_pointsSynth.set(\fineOffsetJitterAmount, value * 0.05) }
+        });
+        var fineOffsetJitterFrequency = ObservableParameter(0).register(c_parameterRegisterKey, { |value|
+          i_server.bind{ i_pointsSynth.set(\fineOffsetJitterFrequency, value) }
+        });
+        var speedOffset = ObservableParameter(0).register(c_parameterRegisterKey, { |value|
+          i_server.bind{ i_pointsSynth.set(\speedOffsets, Array.series(c_maxPointCount, step: value * 0.01)) }
+        });
+        var speedOffsetJitterAmount = ObservableParameter(0).register(c_parameterRegisterKey, { |value|
+          i_server.bind{ i_pointsSynth.set(\speedOffsetJitterAmount, value * 0.01) }
+        });
+        var speedOffsetJitterFrequency = ObservableParameter(0).register(c_parameterRegisterKey, { |value|
+          i_server.bind{ i_pointsSynth.set(\speedOffsetJitterFrequency, value) }
+        });
+        var activePointCount = getObservableParamWithIntSpec.(0, ControlSpec(1, c_maxPointCount, step: 1)).register(c_parameterRegisterKey, { this.prUpdateNotesBus(); this.prRefreshTriggerSynths() });
+        var probability = { var spec = ControlSpec(0.0, 1.0, step: 0.001); ObservableParameter(0, set: { |value|
+          spec.constrain(value) }) }.().register(c_parameterRegisterKey, { |value| i_server.bind { i_currentTriggerSynths.do { |synth| synth.set(\probability, value) } }
+          });
+        var lowNote = getObservableParamWithIntSpec.(0, ControlSpec(0, 127, step: 1)).register(c_parameterRegisterKey, { this.prUpdateNotesBus() });
+        var highNote = getObservableParamWithIntSpec.(0, ControlSpec(0, 127, step: 1)).register(c_parameterRegisterKey, { this.prUpdateNotesBus() });
+        var paused = ObservableParameter(false).register(c_parameterRegisterKey, { |value|
+          i_server.bind { i_pointsSynth.set(\paused, if (value, 1, 0)) }
+        });
+
+
+        i_parameters = IdentityDictionary.newFrom([
+            cv_parameterNames.triggerCount, triggerCount,
+            cv_parameterNames.triggers, trigger,
+            cv_parameterNames.bpm, bpm,
+            cv_parameterNames.loopLength, loopLength,
+            cv_parameterNames.scaleIndex, scaleIndex,
+            cv_parameterNames.rootIndex, root,
+            cv_parameterNames.octaveOffset, octaveOffset,
+            cv_parameterNames.globalOffset, globalOffset,
+            cv_parameterNames.quantizedOffsetIndex, quantizedOffset,
+            cv_parameterNames.fineOffset, fineOffset,
+            cv_parameterNames.fineOffsetJitterAmount, fineOffsetJitterAmount,
+            cv_parameterNames.fineOffsetJitterFrequency, fineOffsetJitterFrequency,
+            cv_parameterNames.speedOffset, speedOffset,
+            cv_parameterNames.speedOffsetJitterAmount, speedOffsetJitterAmount,
+            cv_parameterNames.speedOffsetJitterFrequency, speedOffsetJitterFrequency,
+            cv_parameterNames.activePointCount, activePointCount,
+            cv_parameterNames.probability, probability,
+            cv_parameterNames.lowNote, lowNote,
+            cv_parameterNames.highNote, highNote,
+            cv_parameterNames.paused, paused,
+        ]);
 
         this.prDebugPrint("Done initializing parameters");
     }
@@ -301,145 +354,65 @@ HarmonySequencer {
         this.prDebugPrint("Action registered");
     }
 
-    /** Set parameter value and update UI if necessary
-    * @param parameterName: the name of the parameter (see cv_parameterNames)
-    * @param value: the value to set
-    */
-    prSetParameterValue { |parameterName, value|
-        i_parameters[parameterName].setter(value);
-        if (i_parameterUiControls.notNil) {
-            // NOTE: SC doesn't bail out early when chaining conditions so we need to split the check in two to avoid 
-            // errors if i_parameterUiControls is nil
-            if (i_parameterUiControls[parameterName].notNil) {
-                var value = i_parameters[parameterName].getter();
-                defer { i_parameterUiControls[parameterName].view.value_(value); }
-            }
-        }
-    }
+    triggerCount { ^i_parameters[cv_parameterNames.triggerCount].value }
+    triggerCount_ { |value| i_parameters[cv_parameterNames.triggerCount].set(value) }
 
-    triggerCount { ^i_parameters[cv_parameterNames.triggerCount].getter() }
-    triggerCount_ { |value|
-        this.prSetParameterValue(cv_parameterNames.triggerCount, value);
-        this.triggers_(this.triggers); // update triggers array
-    }
+    triggers { ^i_parameters[cv_parameterNames.triggers].value }
+    triggers_ { |value| i_parameters[cv_parameterNames.triggers].set(value) }
 
-    triggers { ^i_parameters[cv_parameterNames.triggers].getter() }
-    triggers_ { |value|
-        var padded = value.clipExtend(value.size.min(this.triggerCount));
-        padded = padded ++ Array.fill(this.triggerCount - padded.size, false);
-        this.prSetParameterValue(cv_parameterNames.triggers, padded);
-        this.prRefreshTriggerSynths();
-        defer { this.prCreateTriggerControls() };
-    }
+    bpm { ^i_parameters[cv_parameterNames.bpm].value }
+    bpm_ { |value| i_parameters[cv_parameterNames.bpm].set(value) }
 
-    bpm { ^i_parameters[cv_parameterNames.bpm].getter() }
-    bpm_ { |value|
-        this.prSetParameterValue(cv_parameterNames.bpm, value);
-        i_server.bind { i_pointsSynth.set(\bpm, this.bpm) };
-    }
+    loopLength { ^i_parameters[cv_parameterNames.loopLength].value }
+    loopLength_ { |value| i_parameters[cv_parameterNames.loopLength].set(value) }
 
-    loopLength { ^i_parameters[cv_parameterNames.loopLength].getter() }
-    loopLength_ { |value|
-        this.prSetParameterValue(cv_parameterNames.loopLength, value);
-        i_server.bind { i_pointsSynth.set(\loopLength, this.loopLength) };
-    }
+    scaleIndex { ^i_parameters[cv_parameterNames.scaleIndex].value }
+    scaleIndex_ { |value| i_parameters[cv_parameterNames.scaleIndex].set(value); }
 
-    scaleIndex { ^i_parameters[cv_parameterNames.scaleIndex].getter() }
-    scaleIndex_ { |value|
-        this.prSetParameterValue(cv_parameterNames.scaleIndex, value);
-        this.prUpdateNotesBus();
-    }
+    root { ^i_parameters[cv_parameterNames.rootIndex].value }
+    root_ { |value| i_parameters[cv_parameterNames.rootIndex].set(value); }
 
-    root { ^i_parameters[cv_parameterNames.rootIndex].getter() }
-    root_ { |value|
-        this.prSetParameterValue(cv_parameterNames.rootIndex, value);
-        this.prUpdateNotesBus();
-    }
+    octaveOffset { ^i_parameters[cv_parameterNames.octaveOffset].value }
+    octaveOffset_ { |value| i_parameters[cv_parameterNames.octaveOffset].set(value); }
 
-    octaveOffset { ^i_parameters[cv_parameterNames.octaveOffset].getter() }
-    octaveOffset_ { |value|
-        this.prSetParameterValue(cv_parameterNames.octaveOffset, value);
-        this.prUpdateNotesBus();
-    }
+    globalOffset { ^i_parameters[cv_parameterNames.globalOffset].value }
+    globalOffset_ { |value| i_parameters[cv_parameterNames.globalOffset].set(value); }
 
-    globalOffset { ^i_parameters[cv_parameterNames.globalOffset].getter() }
-    globalOffset_ { |value|
-        this.prSetParameterValue(cv_parameterNames.globalOffset, value);
-        i_server.bind{ i_pointsSynth.set(\globalOffset, this.globalOffset) };
-    }
+    quantizedOffset { ^i_parameters[cv_parameterNames.quantizedOffsetIndex].value }
+    quantizedOffset_ { |value| i_parameters[cv_parameterNames.quantizedOffsetIndex].set(value); }
 
-    quantizedOffset { ^i_parameters[cv_parameterNames.quantizedOffsetIndex].getter() }
-    quantizedOffset_ { |value|
-        this.prSetParameterValue(cv_parameterNames.quantizedOffsetIndex, value);
-        i_server.bind{ i_pointsSynth.set(\quantizedOffsets, Array.series(c_maxPointCount, step: cv_quantizedValues[this.quantizedOffset])) };
-    }
+    fineOffset { ^i_parameters[cv_parameterNames.fineOffset].value }
+    fineOffset_ { |value| i_parameters[cv_parameterNames.fineOffset].set(value); }
 
-    fineOffset { ^i_parameters[cv_parameterNames.fineOffset].getter() }
-    fineOffset_ { |value|
-        this.prSetParameterValue(cv_parameterNames.fineOffset, value);
-        i_server.bind{ i_pointsSynth.set(\fineOffsets, Array.series(c_maxPointCount, step: this.fineOffset * 0.05)) };
-    }
+    fineOffsetJitterAmount { ^i_parameters[cv_parameterNames.fineOffsetJitterAmount].value }
+    fineOffsetJitterAmount_ { |value| i_parameters[cv_parameterNames.fineOffsetJitterAmount].set(value); }
 
-    fineOffsetJitterAmount { ^i_parameters[cv_parameterNames.fineOffsetJitterAmount].getter() }
-    fineOffsetJitterAmount_ { |value|
-        this.prSetParameterValue(cv_parameterNames.fineOffsetJitterAmount, value);
-        i_server.bind{ i_pointsSynth.set(\fineOffsetJitterAmount, this.fineOffsetJitterAmount * 0.05) };
-    }
+    fineOffsetJitterFrequency { ^i_parameters[cv_parameterNames.fineOffsetJitterFrequency].value }
+    fineOffsetJitterFrequency_ { |value| i_parameters[cv_parameterNames.fineOffsetJitterFrequency].set(value); }
 
-    fineOffsetJitterFrequency { ^i_parameters[cv_parameterNames.fineOffsetJitterFrequency].getter() }
-    fineOffsetJitterFrequency_ { |value|
-        this.prSetParameterValue(cv_parameterNames.fineOffsetJitterFrequency, value);
-        i_server.bind{ i_pointsSynth.set(\fineOffsetJitterFrequency, this.fineOffsetJitterFrequency) };
-    }
+    speedOffset { ^i_parameters[cv_parameterNames.speedOffset].value }
+    speedOffset_ { |value| i_parameters[cv_parameterNames.speedOffset].set(value); }
 
-    speedOffset { ^i_parameters[cv_parameterNames.speedOffset].getter() }
-    speedOffset_ { |value|
-        this.prSetParameterValue(cv_parameterNames.speedOffset, value);
-        i_server.bind{ i_pointsSynth.set(\speedOffsets, Array.series(c_maxPointCount, step: this.speedOffset * 0.01)) };
-    }
+    speedOffsetJitterAmount { ^i_parameters[cv_parameterNames.speedOffsetJitterAmount].value }
+    speedOffsetJitterAmount_ { |value| i_parameters[cv_parameterNames.speedOffsetJitterAmount].set(value); }
 
-    speedOffsetJitterAmount { ^i_parameters[cv_parameterNames.speedOffsetJitterAmount].getter() }
-    speedOffsetJitterAmount_ { |value|
-        this.prSetParameterValue(cv_parameterNames.speedOffsetJitterAmount, value);
-        i_server.bind{ i_pointsSynth.set(\speedOffsetJitterAmount, this.speedOffsetJitterAmount * 0.01) };
-    }
+    speedOffsetJitterFrequency { ^i_parameters[cv_parameterNames.speedOffsetJitterFrequency].value }
+    speedOffsetJitterFrequency_ { |value| i_parameters[cv_parameterNames.speedOffsetJitterFrequency].set(value); }
 
-    speedOffsetJitterFrequency { ^i_parameters[cv_parameterNames.speedOffsetJitterFrequency].getter() }
-    speedOffsetJitterFrequency_ { |value|
-        this.prSetParameterValue(cv_parameterNames.speedOffsetJitterFrequency, value);
-        i_server.bind{ i_pointsSynth.set(\speedOffsetJitterFrequency, this.speedOffsetJitterFrequency) };
-    }
+    activePointCount { ^i_parameters[cv_parameterNames.activePointCount].value }
+    activePointCount_ { |value| i_parameters[cv_parameterNames.activePointCount].set(value); }
 
-    activePointCount { ^i_parameters[cv_parameterNames.activePointCount].getter() }
-    activePointCount_ { |value|
-        this.prSetParameterValue(cv_parameterNames.activePointCount, value);
-        this.prUpdateNotesBus();
-        this.prRefreshTriggerSynths();
-    }
+    probability { ^i_parameters[cv_parameterNames.probability].value }
+    probability_ { |value| i_parameters[cv_parameterNames.probability].set(value); }
 
-    probability { ^i_parameters[cv_parameterNames.probability].getter() }
-    probability_ { |value|
-        this.prSetParameterValue(cv_parameterNames.probability, value);
-        i_server.bind { i_currentTriggerSynths.do { |synth| synth.set(\probability, this.probability) } };
-    }
+    lowNote { ^i_parameters[cv_parameterNames.lowNote].value }
+    lowNote_ { |value| i_parameters[cv_parameterNames.lowNote].set(value); }
 
-    lowNote { ^i_parameters[cv_parameterNames.lowNote].getter() }
-    lowNote_ { |value|
-        this.prSetParameterValue(cv_parameterNames.lowNote, value);
-        this.prUpdateNotesBus();
-    }
+    highNote { ^i_parameters[cv_parameterNames.highNote].value }
+    highNote_ { |value| i_parameters[cv_parameterNames.highNote].set(value); }
 
-    highNote { ^i_parameters[cv_parameterNames.highNote].getter() }
-    highNote_ { |value|
-        this.prSetParameterValue(cv_parameterNames.highNote, value);
-        this.prUpdateNotesBus();
-    }
-
-    paused { ^i_parameters[cv_parameterNames.paused].getter() }
-    paused_ { |value|
-        this.prSetParameterValue(cv_parameterNames.paused, value);
-        i_server.bind { i_pointsSynth.set(\paused, if (this.paused, 1, 0)) };
-    }
+    paused { ^i_parameters[cv_parameterNames.paused].value }
+    paused_ { |value| i_parameters[cv_parameterNames.paused].set(value); }
 
     /** Update notes bus */
     prUpdateNotesBus{
@@ -481,7 +454,11 @@ HarmonySequencer {
 
             var width = 400, height = 200;
             var screen = Window.availableBounds;
-            i_window = Window.new("Harmony sequencer", Rect((screen.width - width)/2, (screen.height + height)/2, width, height)).onClose_({ refreshOscFunc.free; debounceRoutine.free; });
+            i_window = Window.new("Harmony sequencer", Rect((screen.width - width)/2, (screen.height + height)/2, width, height)).onClose_({
+                refreshOscFunc.free;
+                debounceRoutine.free;
+                this.prUnregisterControlsFromParameters();
+            });
 
             i_userView = UserView().background_(Color.white).drawFunc_({|view|
                 var width = view.bounds.width;
@@ -517,6 +494,7 @@ HarmonySequencer {
 
             this.prCreateParametersControls();
             this.prCreateTriggerControls();
+            this.prRegisterControlsWithParameters();
 
             layoutRows = [
                 this.prGetControlGridRow(cv_parameterNames.bpm),
@@ -624,27 +602,41 @@ HarmonySequencer {
             });
 
 
-        // TODO set bounds and steps using parameters spec?
-        i_parameterUiControls = (
-            cv_parameterNames[\bpm]: (label: "BPM", view: NumberBox().step_(1).scroll_step_(1).clipLo_(1).value_(this.bpm).action_({|view| this.bpm_(view.value) })),
-            cv_parameterNames[\loopLength]: (label: "Loop length", view: NumberBox().step_(1).scroll_step_(1).clipLo_(0.001).value_(this.loopLength).action_({|view| this.loopLength_(view.value) })),
-            cv_parameterNames[\scaleIndex]: (label: "Scale", view: PopUpMenu().items_(cv_scaleLabels).value_(this.scaleIndex).action_({|view| this.scaleIndex_(view.value) })),
-            cv_parameterNames[\rootIndex]: (label: "Root", view: PopUpMenu().items_(cv_rootLabels).value_(this.root).action_({|view| this.root_(view.value) })),
-            cv_parameterNames[\octaveOffset]: (label: "Octave offset", view: NumberBox().step_(1).scroll_step_(1).clipLo_(-2).clipHi_(2).value_(this.octaveOffset).action_({|view| this.octaveOffset_(view.value) })),
-            cv_parameterNames[\globalOffset]: (label: "Global offset", view: NumberBox().step_(0.01).scroll_step_(0.01).value_(this.globalOffset).action_({|view| this.globalOffset_(view.value) })),
-            cv_parameterNames[\quantizedOffsetIndex]: (label: "Quantized offset", view: PopUpMenu().items_(cv_quantizedLabels).value_(this.quantizedOffset).action_({|view| this.quantizedOffset_(view.value) })),
-            cv_parameterNames[\fineOffset]: (label: "Fine offset", view: NumberBox().step_(0.01).scroll_step_(0.01).value_(this.fineOffset).action_({|view| this.fineOffset_(view.value) })),
-            cv_parameterNames[\fineOffsetJitterAmount]: (label: "Fine offset jitter amount", view: NumberBox().step_(0.01).scroll_step_(0.01).value_(this.fineOffsetJitterAmount).action_({|view| this.fineOffsetJitterAmount_(view.value) })),
-            cv_parameterNames[\fineOffsetJitterFrequency]: (label: "Fine offset jitter frequency", view: NumberBox().step_(0.01).scroll_step_(0.01).value_(this.fineOffsetJitterFrequency).action_({|view| this.fineOffsetJitterFrequency_(view.value) })),
-            cv_parameterNames[\speedOffset]: (label: "Speed offset", view: NumberBox().step_(0.01).scroll_step_(0.01).value_(this.speedOffset).action_({|view| this.speedOffset_(view.value) })),
-            cv_parameterNames[\speedOffsetJitterAmount]: (label: "Speed offset jitter amount", view: NumberBox().step_(0.01).scroll_step_(0.01).value_(this.speedOffsetJitterAmount).action_({|view| this.speedOffsetJitterAmount_(view.value) })),
-            cv_parameterNames[\speedOffsetJitterFrequency]: (label: "Speed offset jitter frequency", view: NumberBox().step_(0.01).scroll_step_(0.01).value_(this.speedOffsetJitterFrequency).action_({|view| this.speedOffsetJitterFrequency_(view.value) })),
-            cv_parameterNames[\probability]: (label: "Probability", view: NumberBox().step_(0.01).scroll_step_(0.01).clipLo_(0.0).clipHi_(1.0).value_(this.probability).action_({|view| this.probability_(view.value) })),
-            cv_parameterNames[\activePointCount]: (label: "Point count", view: NumberBox().step_(1).scroll_step_(1).clipLo_(1).clipHi_(c_maxPointCount).value_(this.activePointCount).action_({|view| this.activePointCount_(view.value) })),
-            cv_parameterNames[\triggerCount]: (label: "Trigger count", view: NumberBox().step_(1).scroll_step_(1).clipLo_(1).clipHi_(c_maxTriggerCount).value_(this.triggerCount).action_({|view| this.triggerCount_(view.value) })),
-            cv_parameterNames[\lowNote]: (label: "Low note", view: lowNoteControl),
-            cv_parameterNames[\highNote]: (label: "High note", view: highNoteControl),
-        );
+        i_parameterUiControls = IdentityDictionary.newFrom([
+            cv_parameterNames.bpm, (label: "BPM", view: NumberBox().step_(1).scroll_step_(1).clipLo_(1).value_(this.bpm).action_({ |view| this.bpm_(view.value) })),
+            cv_parameterNames.loopLength, (label: "Loop length", view: NumberBox().step_(1).scroll_step_(1).clipLo_(0.001).value_(this.loopLength).action_({ |view| this.loopLength_(view.value) })),
+            cv_parameterNames.scaleIndex, (label: "Scale", view: PopUpMenu().items_(cv_scaleLabels).value_(this.scaleIndex).action_({ |view| this.scaleIndex_(view.value) })),
+            cv_parameterNames.rootIndex, (label: "Root", view: PopUpMenu().items_(cv_rootLabels).value_(this.root).action_({ |view| this.root_(view.value) })),
+            cv_parameterNames.octaveOffset, (label: "Octave offset", view: NumberBox().step_(1).scroll_step_(1).clipLo_(-2).clipHi_(2).value_(this.octaveOffset).action_({ |view| this.octaveOffset_(view.value) })),
+            cv_parameterNames.globalOffset, (label: "Global offset", view: NumberBox().step_(0.01).scroll_step_(0.01).value_(this.globalOffset).action_({ |view| this.globalOffset_(view.value) })),
+            cv_parameterNames.quantizedOffsetIndex, (label: "Quantized offset", view: PopUpMenu().items_(cv_quantizedLabels).value_(this.quantizedOffset).action_({ |view| this.quantizedOffset_(view.value) })),
+            cv_parameterNames.fineOffset, (label: "Fine offset", view: NumberBox().step_(0.01).scroll_step_(0.01).value_(this.fineOffset).action_({ |view| this.fineOffset_(view.value) })),
+            cv_parameterNames.fineOffsetJitterAmount, (label: "Fine offset jitter amount", view: NumberBox().step_(0.01).scroll_step_(0.01).value_(this.fineOffsetJitterAmount).action_({ |view| this.fineOffsetJitterAmount_(view.value) })),
+            cv_parameterNames.fineOffsetJitterFrequency, (label: "Fine offset jitter frequency", view: NumberBox().step_(0.01).scroll_step_(0.01).value_(this.fineOffsetJitterFrequency).action_({ |view| this.fineOffsetJitterFrequency_(view.value) })),
+            cv_parameterNames.speedOffset, (label: "Speed offset", view: NumberBox().step_(0.01).scroll_step_(0.01).value_(this.speedOffset).action_({ |view| this.speedOffset_(view.value) })),
+            cv_parameterNames.speedOffsetJitterAmount, (label: "Speed offset jitter amount", view: NumberBox().step_(0.01).scroll_step_(0.01).value_(this.speedOffsetJitterAmount).action_({ |view| this.speedOffsetJitterAmount_(view.value) })),
+            cv_parameterNames.speedOffsetJitterFrequency, (label: "Speed offset jitter frequency", view: NumberBox().step_(0.01).scroll_step_(0.01).value_(this.speedOffsetJitterFrequency).action_({ |view| this.speedOffsetJitterFrequency_(view.value) })),
+            cv_parameterNames.probability, (label: "Probability", view: NumberBox().step_(0.01).scroll_step_(0.01).clipLo_(0.0).clipHi_(1.0).value_(this.probability).action_({ |view| this.probability_(view.value) })),
+            cv_parameterNames.activePointCount, (label: "Point count", view: NumberBox().step_(1).scroll_step_(1).clipLo_(1).clipHi_(c_maxPointCount).value_(this.activePointCount).action_({ |view| this.activePointCount_(view.value) })),
+            cv_parameterNames.triggerCount, (label: "Trigger count", view: NumberBox().step_(1).scroll_step_(1).clipLo_(1).clipHi_(c_maxTriggerCount).value_(this.triggerCount).action_({ |view| this.triggerCount_(view.value) })),
+            cv_parameterNames.lowNote, (label: "Low note", view: lowNoteControl),
+            cv_parameterNames.highNote, (label: "High note", view: highNoteControl),
+        ]);
+    }
+
+    /** Register controls to matching parameter update notification */
+    prRegisterControlsWithParameters {
+        i_parameters.keysValuesDo { |key, parameter|
+            var control = i_parameterUiControls[key];
+            if (control.notNil) { parameter.register(c_controlParameterRegisterKey, { |value| control.view.value_(value) }) };
+        }
+    }
+
+    /** Unregister all controls from parameter update notification */
+    prUnregisterControlsFromParameters {
+        i_parameters.do { |parameter| 
+          if (parameter.registeredKeys.includes(c_controlParameterRegisterKey)) { parameter.unregister(c_controlParameterRegisterKey) };
+        };
     }
 
     /** Create a row of controls for a single parameter
