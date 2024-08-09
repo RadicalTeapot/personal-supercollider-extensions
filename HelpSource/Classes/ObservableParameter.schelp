@@ -8,8 +8,7 @@ Utility class for a value container with overridable getter and setter and chang
 
 When left to nil, getter and setter behaves as regular getter and setter.
 
-When set, the internal link::Classes/Observer##Observer:: executes its notify method with the new parameter value (after setter logic was
-executed).
+When setting the parameter value, the internal link::Classes/Observer##Observer:: executes its notify method with the new parameter value (after setter logic was executed).
 
 CLASSMETHODS::
 

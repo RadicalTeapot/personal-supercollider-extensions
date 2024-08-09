@@ -1,0 +1,49 @@
+TITLE:: DebouncedObservableParameter
+SUMMARY:: Value container with overridable getter, debounced setter and change notification.
+CATEGORIES:: Utility
+RELATED:: Classes/Parameter, Classes/Observer, Classes/ObservableParameter, Classes/Debouncer
+
+DESCRIPTION::
+Utility class for a value container with overridable getter, debounced setter and change notification.
+
+When left to nil, getter and setter behaves as regular getter and setter.
+
+When setting the parameter value, the update is first debounced using the internal link::Classes/Debouncer##Debouncer:: and then the internal link::Classes/Observer##Observer:: executes its notify method with the new parameter value (after setter logic was executed).
+
+CLASSMETHODS::
+
+METHOD:: new
+Create a new instance.
+ARGUMENT:: initialValue
+Initial value for the parameter.
+ARGUMENT:: get
+Function overriding the parameter getter. Takes value as argument and should return a value.
+The returned value will be used when getting the parameter value.
+ARGUMENT:: set
+Function overriding the parameter setter. Takes value as argument and should return a value.
+The returned value will be set as the parameter value.
+ARGUMENT:: rate
+Maximum rate at which the setting the parameter can occur, in seconds.
+
+
+INSTANCEMETHODS::
+
+METHOD:: value
+Set or return the parameter value, using overriden getter and setter if they were set.
+
+If parameter value is set, the update is first debounced using the internal link::Classes/Debouncer##Debouncer:: and then the internal link::Classes/Observer##Observer:: notify method gets executed.
+
+EXAMPLES::
+
+CODE::
+var debouncedParameter = DebouncedObservableParameter(set: {|val| ("Setting to"+val).postln; val}, rate: 0.5);
+debouncedParameter.register(\update, {|val| ("Updated to"+val).postln });
+fork {
+    var v = 0;
+    loop {
+        debouncedParameter.value = v;
+        v = v + 1;
+        0.2.yield;
+    }
+}
+::

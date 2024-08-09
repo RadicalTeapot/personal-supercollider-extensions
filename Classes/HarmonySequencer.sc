@@ -442,10 +442,8 @@ HarmonySequencer {
         }, c_uiUpdateOscPath);
 
         debounceRoutine = Routine { loop {
-            if (i_nextDebounceAction.notNil) {
-                i_nextDebounceAction.(); // Run the next function and reset the storage value
-                i_nextDebounceAction = nil;
-            };
+            i_nextDebounceAction.value; // Run the next function and reset the storage value (it's safe to call value on nil so no need to check)
+            i_nextDebounceAction = nil;
             c_debounceTime.yield;
         }}.play;
 
@@ -634,7 +632,7 @@ HarmonySequencer {
 
     /** Unregister all controls from parameter update notification */
     prUnregisterControlsFromParameters {
-        i_parameters.do { |parameter| 
+        i_parameters.do { |parameter|
           if (parameter.registeredKeys.includes(c_controlParameterRegisterKey)) { parameter.unregister(c_controlParameterRegisterKey) };
         };
     }

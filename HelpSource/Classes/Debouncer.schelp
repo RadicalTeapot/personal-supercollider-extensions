@@ -1,0 +1,48 @@
+TITLE:: Debouncer
+SUMMARY:: Limit rate at which an action can run.
+CATEGORIES:: Utility
+
+DESCRIPTION::
+Utility class to limit the rate at which an action can run.
+
+CLASSMETHODS::
+
+METHOD:: new
+Create a new instance.
+ARGUMENT:: action
+Action to run, will receive the arguments passed to the update call.
+ARGUMENT:: rate
+Maximum rate at which the action will be run, in seconds.
+ARGUMENT:: updateCallback
+Function to be called when action is run, will receive the return value(s) of action as argument.
+
+INSTANCEMETHODS::
+
+METHOD:: action
+Action to run, will receive the arguments passed to the update call.
+
+METHOD:: rate
+Set or return the maximum execution rate, in seconds.
+
+METHOD:: updateCallback
+Function to be called when action is run, will receive the return value(s) of action as argument.
+
+METHOD:: update
+Mark action to be run with the provided arguments.
+If the previous update was not run yet, it will be dropped and replaced with the provided one.
+ARGUMENT:: ... args
+Arguments to pass to the action.
+
+EXAMPLES::
+
+CODE::
+var debouncedAction = Debouncer({|valueA, valueB| [valueA, valueB].postln}).rate_(0.5);
+fork {
+    var v = 0;
+    loop {
+        debouncedAction.update(v, 5);
+        v = v + 1;
+        0.2.yield;
+    }
+}
+::
