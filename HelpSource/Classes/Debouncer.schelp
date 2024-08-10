@@ -33,6 +33,9 @@ If the previous update was not run yet, it will be dropped and replaced with the
 ARGUMENT:: ... args
 Arguments to pass to the action.
 
+METHOD:: free
+Stop the internal routine.
+
 EXAMPLES::
 
 CODE::

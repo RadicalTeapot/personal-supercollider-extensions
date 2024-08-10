@@ -33,6 +33,8 @@ Set or return the parameter value, using overriden getter and setter if they wer
 
 If parameter value is set, the update is first debounced using the internal link::Classes/Debouncer##Debouncer:: and then the internal link::Classes/Observer##Observer:: notify method gets executed.
 
+COPYMETHOD:: Debouncer -free
+
 EXAMPLES::
 
 CODE::

@@ -1,17 +1,18 @@
 // TODO
+// Fix issues with new debounced controls
 // Add velocity (ramp up, ramp down, set value, randomize) output with note value in OSC event
 // Add randomize and lock controls for most parameters
 // Add notes from chords controls
 // Add control to rotate note assignment to points
 // Implement presets
-// Debounce other controls (as they show late message when dragged) - also try to reduce debounce time to 10ms
 // Write docs
 HarmonySequencer {
     const c_maxTriggerCount = 16;
     const c_maxPointCount = 64;
     const c_uiUpdateOscPath = "/pointPosUpdate";
     const c_updatePointsTriggeredStateOscPath = "/triggerCrossing";
-    const c_debounceTime = 0.1;
+    const c_debounceTime = 0.01;
+    const c_longDebounceTime = 0.05;
     const c_arrowUpKeycode = 38;
     const c_arrowDownKeycode = 40;
     const c_shiftModifier = 131072;
@@ -41,7 +42,6 @@ HarmonySequencer {
     var i_synthClearRoutine;
     var i_currentTriggerSynths = #[];
     var i_synthsToClear = #[];
-    var i_nextDebounceAction = nil;
 
     var i_parameters = nil;
     var i_parameterUiControls = nil;
@@ -126,34 +126,35 @@ HarmonySequencer {
 
     /** Initialize parameters state */
     prInitializeParameters {
-        var getObservableParamWithIntSpec = { |value, controlSpec|
-            ObservableParameter(
+        var getParameterWithIntSpec = { |value, controlSpec, rate=(c_debounceTime)|
+            DebouncedObservableParameter(
                 initialValue: value,
-                set: { |value| controlSpec.constrain(value).asInteger }
+                set: { |value| controlSpec.constrain(value).asInteger },
+                rate: rate
             );
         };
 
-        var triggerCount = getObservableParamWithIntSpec.(1, ControlSpec(1, c_maxTriggerCount, step: 1)).register(c_parameterRegisterKey, { this.triggers_(this.triggers) });
-        var trigger = ObservableParameter([], set: { |value|
-                var padded = value.clipExtend(value.size.min(this.triggerCount));
-                padded ++ Array.fill(this.triggerCount - padded.size, false);
-            }).register(c_parameterRegisterKey, {
+        var triggerCount = getParameterWithIntSpec.(1, ControlSpec(1, c_maxTriggerCount, step: 1), rate: c_longDebounceTime).register(c_parameterRegisterKey, { this.triggers_(this.triggers) });
+        var trigger = DebouncedObservableParameter([], set: { |value|
+            var padded = value.clipExtend(value.size.min(this.triggerCount));
+            padded ++ Array.fill(this.triggerCount - padded.size, false);
+        }, rate: c_longDebounceTime).register(c_parameterRegisterKey, {
             this.prRefreshTriggerSynths();
             defer { this.prCreateTriggerControls() };
         });
-        var bpm = getObservableParamWithIntSpec.(1, ControlSpec(1, 240, step: 1)).register(c_parameterRegisterKey, { |value|
+        var bpm = getParameterWithIntSpec.(1, ControlSpec(1, 240, step: 1)).register(c_parameterRegisterKey, { |value|
             i_server.bind { i_pointsSynth.set(\bpm, value) };
         });
         var loopLength = ObservableParameter(1, set: { |value| value.max(0.001) }).register(c_parameterRegisterKey, { |value|
             i_server.bind { i_pointsSynth.set(\loopLength, value) };
         });
-        var scaleIndex = getObservableParamWithIntSpec.(0, ControlSpec(0, cv_scales.size - 1, step: 1)).register(c_parameterRegisterKey, { this.prUpdateNotesBus() });
-        var root = getObservableParamWithIntSpec.(0, ControlSpec(0, cv_rootLabels.size - 1, step: 1)).register(c_parameterRegisterKey, { this.prUpdateNotesBus() });
-        var octaveOffset = getObservableParamWithIntSpec.(0, ControlSpec(-2, 2, step: 1)).register(c_parameterRegisterKey, { this.prUpdateNotesBus() });
+        var scaleIndex = getParameterWithIntSpec.(0, ControlSpec(0, cv_scales.size - 1, step: 1)).register(c_parameterRegisterKey, { this.prUpdateNotesBus() });
+        var root = getParameterWithIntSpec.(0, ControlSpec(0, cv_rootLabels.size - 1, step: 1)).register(c_parameterRegisterKey, { this.prUpdateNotesBus() });
+        var octaveOffset = getParameterWithIntSpec.(0, ControlSpec(-2, 2, step: 1)).register(c_parameterRegisterKey, { this.prUpdateNotesBus() });
         var globalOffset = ObservableParameter(0).register(c_parameterRegisterKey, { |value|
           i_server.bind{ i_pointsSynth.set(\globalOffset, value) }
         });
-        var quantizedOffset = getObservableParamWithIntSpec.(0, ControlSpec(0, cv_quantizedValues.size - 1, step: 1)).register(c_parameterRegisterKey, { |value|
+        var quantizedOffset = getParameterWithIntSpec.(0, ControlSpec(0, cv_quantizedValues.size - 1, step: 1)).register(c_parameterRegisterKey, { |value|
           i_server.bind{ i_pointsSynth.set(\quantizedOffsets, Array.series(c_maxPointCount, step: cv_quantizedValues[value])) }
         });
         var fineOffset = ObservableParameter(0).register(c_parameterRegisterKey, { |value|
@@ -174,12 +175,12 @@ HarmonySequencer {
         var speedOffsetJitterFrequency = ObservableParameter(0).register(c_parameterRegisterKey, { |value|
           i_server.bind{ i_pointsSynth.set(\speedOffsetJitterFrequency, value) }
         });
-        var activePointCount = getObservableParamWithIntSpec.(0, ControlSpec(1, c_maxPointCount, step: 1)).register(c_parameterRegisterKey, { this.prUpdateNotesBus(); this.prRefreshTriggerSynths() });
+        var activePointCount = getParameterWithIntSpec.(0, ControlSpec(1, c_maxPointCount, step: 1), rate: c_longDebounceTime).register(c_parameterRegisterKey, { this.prUpdateNotesBus(); this.prRefreshTriggerSynths() });
         var probability = { var spec = ControlSpec(0.0, 1.0, step: 0.001); ObservableParameter(0, set: { |value|
           spec.constrain(value) }) }.().register(c_parameterRegisterKey, { |value| i_server.bind { i_currentTriggerSynths.do { |synth| synth.set(\probability, value) } }
           });
-        var lowNote = getObservableParamWithIntSpec.(0, ControlSpec(0, 127, step: 1)).register(c_parameterRegisterKey, { this.prUpdateNotesBus() });
-        var highNote = getObservableParamWithIntSpec.(0, ControlSpec(0, 127, step: 1)).register(c_parameterRegisterKey, { this.prUpdateNotesBus() });
+        var lowNote = getParameterWithIntSpec.(0, ControlSpec(0, 127, step: 1)).register(c_parameterRegisterKey, { this.prUpdateNotesBus() });
+        var highNote = getParameterWithIntSpec.(0, ControlSpec(0, 127, step: 1)).register(c_parameterRegisterKey, { this.prUpdateNotesBus() });
         var paused = ObservableParameter(false).register(c_parameterRegisterKey, { |value|
           i_server.bind { i_pointsSynth.set(\paused, if (value, 1, 0)) }
         });
@@ -427,7 +428,6 @@ HarmonySequencer {
 
     gui { |refreshRate = 30, showAdvancedGUI = false|
         var refreshOscFunc;
-        var debounceRoutine;
 
         i_server.bind { i_pointsSynth.set(\refreshRate, refreshRate) };
 
@@ -441,12 +441,6 @@ HarmonySequencer {
             defer { i_userView.refresh };
         }, c_uiUpdateOscPath);
 
-        debounceRoutine = Routine { loop {
-            i_nextDebounceAction.value; // Run the next function and reset the storage value (it's safe to call value on nil so no need to check)
-            i_nextDebounceAction = nil;
-            c_debounceTime.yield;
-        }}.play;
-
         AppClock.sched(0, {
             var checkboxes, layoutRows;
 
@@ -454,7 +448,6 @@ HarmonySequencer {
             var screen = Window.availableBounds;
             i_window = Window.new("Harmony sequencer", Rect((screen.width - width)/2, (screen.height + height)/2, width, height)).onClose_({
                 refreshOscFunc.free;
-                debounceRoutine.free;
                 this.prUnregisterControlsFromParameters();
             });
 
@@ -672,6 +665,7 @@ HarmonySequencer {
         i_pointsBus.free;
         i_notesBus.free;
         i_currentTriggerSynths.do {|synth| synth.free };
+        i_parameters.do {|param| param.free };
         this.prDebugPrint("Done freeing");
     }
 }

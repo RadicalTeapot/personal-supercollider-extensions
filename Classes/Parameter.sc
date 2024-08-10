@@ -52,4 +52,6 @@ DebouncedObservableParameter : ObservableParameter {
     }
 
     value_ { |val| i_debouncer.update(val); }
+
+    free { i_debouncer.free; }
 }

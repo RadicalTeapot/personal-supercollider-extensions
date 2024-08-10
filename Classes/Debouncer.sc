@@ -32,4 +32,9 @@ Debouncer {
         i_nextUpdate = { var actionArgs = args; action.valueArray(actionArgs); };
         if (i_updateRoutine.isPlaying.not) { i_updateRoutine.reset.play; };
     }
+
+    free {
+        i_nextUpdate = nil;
+        i_updateRoutine.stop;
+    }
 }
