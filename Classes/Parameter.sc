@@ -37,6 +37,8 @@ ObservableParameter : Parameter {
     unregister { |key| i_observer.unregister(key) }
 
     value_ { |val| super.value_(val); i_observer.notify(this.value()); }
+    setWithoutNotify {|val| super.value_(val); }
+    notify { i_observer.notify(this.value()); }
 }
 
 DebouncedObservableParameter : ObservableParameter {

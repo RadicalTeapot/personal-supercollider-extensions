@@ -1,5 +1,4 @@
 // TODO
-// Fix issues with new debounced controls
 // Add velocity (ramp up, ramp down, set value, randomize) output with note value in OSC event
 // Add randomize and lock controls for most parameters
 // Add notes from chords controls
@@ -145,43 +144,46 @@ HarmonySequencer {
         var bpm = getParameterWithIntSpec.(1, ControlSpec(1, 240, step: 1)).register(c_parameterRegisterKey, { |value|
             i_server.bind { i_pointsSynth.set(\bpm, value) };
         });
-        var loopLength = ObservableParameter(1, set: { |value| value.max(0.001) }).register(c_parameterRegisterKey, { |value|
+        var loopLength = DebouncedObservableParameter(1, set: { |value| value.max(0.001) }, rate: c_debounceTime).register(c_parameterRegisterKey, { |value|
             i_server.bind { i_pointsSynth.set(\loopLength, value) };
         });
         var scaleIndex = getParameterWithIntSpec.(0, ControlSpec(0, cv_scales.size - 1, step: 1)).register(c_parameterRegisterKey, { this.prUpdateNotesBus() });
-        var root = getParameterWithIntSpec.(0, ControlSpec(0, cv_rootLabels.size - 1, step: 1)).register(c_parameterRegisterKey, { this.prUpdateNotesBus() });
+        var rootIndex = getParameterWithIntSpec.(0, ControlSpec(0, cv_rootLabels.size - 1, step: 1)).register(c_parameterRegisterKey, { this.prUpdateNotesBus() });
         var octaveOffset = getParameterWithIntSpec.(0, ControlSpec(-2, 2, step: 1)).register(c_parameterRegisterKey, { this.prUpdateNotesBus() });
-        var globalOffset = ObservableParameter(0).register(c_parameterRegisterKey, { |value|
-          i_server.bind{ i_pointsSynth.set(\globalOffset, value) }
+        var globalOffset = DebouncedObservableParameter(0, rate: c_debounceTime).register(c_parameterRegisterKey, { |value|
+            i_server.bind{ i_pointsSynth.set(\globalOffset, value) }
         });
-        var quantizedOffset = getParameterWithIntSpec.(0, ControlSpec(0, cv_quantizedValues.size - 1, step: 1)).register(c_parameterRegisterKey, { |value|
-          i_server.bind{ i_pointsSynth.set(\quantizedOffsets, Array.series(c_maxPointCount, step: cv_quantizedValues[value])) }
+        var quantizedOffsetIndex = getParameterWithIntSpec.(0, ControlSpec(0, cv_quantizedValues.size - 1, step: 1)).register(c_parameterRegisterKey, { |value|
+            i_server.bind{ i_pointsSynth.set(\quantizedOffsets, Array.series(c_maxPointCount, step: cv_quantizedValues[value])) }
         });
-        var fineOffset = ObservableParameter(0).register(c_parameterRegisterKey, { |value|
-          i_server.bind{ i_pointsSynth.set(\fineOffsets, Array.series(c_maxPointCount, step: value * 0.05)) }
+        var fineOffset = DebouncedObservableParameter(0, rate: c_debounceTime).register(c_parameterRegisterKey, { |value|
+            i_server.bind{ i_pointsSynth.set(\fineOffsets, Array.series(c_maxPointCount, step: value * 0.05)) }
         });
-        var fineOffsetJitterAmount = ObservableParameter(0).register(c_parameterRegisterKey, { |value|
-          i_server.bind{ i_pointsSynth.set(\fineOffsetJitterAmount, value * 0.05) }
+        var fineOffsetJitterAmount = DebouncedObservableParameter(0, rate: c_debounceTime).register(c_parameterRegisterKey, { |value|
+            i_server.bind{ i_pointsSynth.set(\fineOffsetJitterAmount, value * 0.05) }
         });
-        var fineOffsetJitterFrequency = ObservableParameter(0).register(c_parameterRegisterKey, { |value|
-          i_server.bind{ i_pointsSynth.set(\fineOffsetJitterFrequency, value) }
+        var fineOffsetJitterFrequency = DebouncedObservableParameter(0, rate: c_debounceTime).register(c_parameterRegisterKey, { |value|
+            i_server.bind{ i_pointsSynth.set(\fineOffsetJitterFrequency, value) }
         });
-        var speedOffset = ObservableParameter(0).register(c_parameterRegisterKey, { |value|
-          i_server.bind{ i_pointsSynth.set(\speedOffsets, Array.series(c_maxPointCount, step: value * 0.01)) }
+        var speedOffset = DebouncedObservableParameter(0, rate: c_debounceTime).register(c_parameterRegisterKey, { |value|
+            i_server.bind{ i_pointsSynth.set(\speedOffsets, Array.series(c_maxPointCount, step: value * 0.01)) }
         });
-        var speedOffsetJitterAmount = ObservableParameter(0).register(c_parameterRegisterKey, { |value|
-          i_server.bind{ i_pointsSynth.set(\speedOffsetJitterAmount, value * 0.01) }
+        var speedOffsetJitterAmount = DebouncedObservableParameter(0, rate: c_debounceTime).register(c_parameterRegisterKey, { |value|
+            i_server.bind{ i_pointsSynth.set(\speedOffsetJitterAmount, value * 0.01) }
         });
-        var speedOffsetJitterFrequency = ObservableParameter(0).register(c_parameterRegisterKey, { |value|
-          i_server.bind{ i_pointsSynth.set(\speedOffsetJitterFrequency, value) }
+        var speedOffsetJitterFrequency = DebouncedObservableParameter(0, rate: c_debounceTime).register(c_parameterRegisterKey, { |value|
+            i_server.bind{ i_pointsSynth.set(\speedOffsetJitterFrequency, value) }
         });
         var activePointCount = getParameterWithIntSpec.(0, ControlSpec(1, c_maxPointCount, step: 1), rate: c_longDebounceTime).register(c_parameterRegisterKey, { this.prUpdateNotesBus(); this.prRefreshTriggerSynths() });
-        var probability = { var spec = ControlSpec(0.0, 1.0, step: 0.001); ObservableParameter(0, set: { |value|
-          spec.constrain(value) }) }.().register(c_parameterRegisterKey, { |value| i_server.bind { i_currentTriggerSynths.do { |synth| synth.set(\probability, value) } }
-          });
+        var probability = { 
+            var spec = ControlSpec(0.0, 1.0, step: 0.001); 
+            DebouncedObservableParameter(0, set: { |value| spec.constrain(value) }, rate: c_debounceTime)
+        }.().register(c_parameterRegisterKey, { |value| 
+            i_server.bind { i_currentTriggerSynths.do { |synth| synth.set(\probability, value) } } 
+        });
         var lowNote = getParameterWithIntSpec.(0, ControlSpec(0, 127, step: 1)).register(c_parameterRegisterKey, { this.prUpdateNotesBus() });
         var highNote = getParameterWithIntSpec.(0, ControlSpec(0, 127, step: 1)).register(c_parameterRegisterKey, { this.prUpdateNotesBus() });
-        var paused = ObservableParameter(false).register(c_parameterRegisterKey, { |value|
+        var paused = DebouncedObservableParameter(false, rate: c_debounceTime).register(c_parameterRegisterKey, { |value|
           i_server.bind { i_pointsSynth.set(\paused, if (value, 1, 0)) }
         });
 
@@ -192,10 +194,10 @@ HarmonySequencer {
             cv_parameterNames.bpm, bpm,
             cv_parameterNames.loopLength, loopLength,
             cv_parameterNames.scaleIndex, scaleIndex,
-            cv_parameterNames.rootIndex, root,
+            cv_parameterNames.rootIndex, rootIndex,
             cv_parameterNames.octaveOffset, octaveOffset,
             cv_parameterNames.globalOffset, globalOffset,
-            cv_parameterNames.quantizedOffsetIndex, quantizedOffset,
+            cv_parameterNames.quantizedOffsetIndex, quantizedOffsetIndex,
             cv_parameterNames.fineOffset, fineOffset,
             cv_parameterNames.fineOffsetJitterAmount, fineOffsetJitterAmount,
             cv_parameterNames.fineOffsetJitterFrequency, fineOffsetJitterFrequency,
@@ -213,31 +215,34 @@ HarmonySequencer {
     }
 
     setParameterValues {
-        |triggerCount=8, triggers=#[true], bpm=110, loopLength=1, scaleIndex=0, root=0, octaveOffset=0, globalOffset=0,
-        quantizedOffset=0, fineOffset=0, fineOffsetJitterAmount=0, fineOffsetJitterFrequency=1, speedOffset=0,
+        |triggerCount=8, triggers=#[true], bpm=110, loopLength=1, scaleIndex=0, rootIndex=0, octaveOffset=0, globalOffset=0,
+        quantizedOffsetIndex=0, fineOffset=0, fineOffsetJitterAmount=0, fineOffsetJitterFrequency=1, speedOffset=0,
         speedOffsetJitterAmount=0, speedOffsetJitterFrequency=1, activePointCount=8, probability=1, lowNote=0,
         highNote=127, paused=false|
-        this.triggerCount_(triggerCount);
-        this.triggers_(triggers);
-        this.bpm_(bpm);
-        this.loopLength_(loopLength);
-        this.scaleIndex_(scaleIndex);
-        this.root_(root);
-        this.octaveOffset_(octaveOffset);
-        this.globalOffset_(globalOffset);
-        this.quantizedOffset_(quantizedOffset);
-        this.fineOffset_(fineOffset);
-        this.fineOffsetJitterAmount_(fineOffsetJitterAmount);
-        this.fineOffsetJitterFrequency_(fineOffsetJitterFrequency);
-        this.speedOffset_(speedOffset);
-        this.speedOffsetJitterAmount_(speedOffsetJitterAmount);
-        this.speedOffsetJitterFrequency_(speedOffsetJitterFrequency);
-        this.activePointCount_(activePointCount);
-        this.probability_(probability);
-        this.lowNote_(lowNote);
-        this.highNote_(highNote);
-        this.paused_(paused);
-        this.prDebugPrint("Done setting parameter values");
+        i_parameters[cv_parameterNames.triggerCount].setWithoutNotify(triggerCount);
+        i_parameters[cv_parameterNames.triggers].setWithoutNotify(triggers);
+        i_parameters[cv_parameterNames.bpm].setWithoutNotify(bpm);
+        i_parameters[cv_parameterNames.loopLength].setWithoutNotify(loopLength);
+        i_parameters[cv_parameterNames.scaleIndex].setWithoutNotify(scaleIndex);
+        i_parameters[cv_parameterNames.rootIndex].setWithoutNotify(rootIndex);
+        i_parameters[cv_parameterNames.octaveOffset].setWithoutNotify(octaveOffset);
+        i_parameters[cv_parameterNames.globalOffset].setWithoutNotify(globalOffset);
+        i_parameters[cv_parameterNames.quantizedOffsetIndex].setWithoutNotify(quantizedOffsetIndex);
+        i_parameters[cv_parameterNames.fineOffset].setWithoutNotify(fineOffset);
+        i_parameters[cv_parameterNames.fineOffsetJitterAmount].setWithoutNotify(fineOffsetJitterAmount);
+        i_parameters[cv_parameterNames.fineOffsetJitterFrequency].setWithoutNotify(fineOffsetJitterFrequency);
+        i_parameters[cv_parameterNames.speedOffset].setWithoutNotify(speedOffset);
+        i_parameters[cv_parameterNames.speedOffsetJitterAmount].setWithoutNotify(speedOffsetJitterAmount);
+        i_parameters[cv_parameterNames.speedOffsetJitterFrequency].setWithoutNotify(speedOffsetJitterFrequency);
+        i_parameters[cv_parameterNames.activePointCount].setWithoutNotify(activePointCount);
+        i_parameters[cv_parameterNames.probability].setWithoutNotify(probability);
+        i_parameters[cv_parameterNames.lowNote].setWithoutNotify(lowNote);
+        i_parameters[cv_parameterNames.highNote].setWithoutNotify(highNote);
+        i_parameters[cv_parameterNames.paused].setWithoutNotify(paused);
+
+        i_parameters.do { |param| param.notify };
+
+        cv_parameterNames.prDebugPrint("Done setting parameter values");
     }
 
     loadPreset { |key|
@@ -370,8 +375,8 @@ HarmonySequencer {
     scaleIndex { ^i_parameters[cv_parameterNames.scaleIndex].value }
     scaleIndex_ { |value| i_parameters[cv_parameterNames.scaleIndex].set(value); }
 
-    root { ^i_parameters[cv_parameterNames.rootIndex].value }
-    root_ { |value| i_parameters[cv_parameterNames.rootIndex].set(value); }
+    rootIndex { ^i_parameters[cv_parameterNames.rootIndex].value }
+    rootIndex_ { |value| i_parameters[cv_parameterNames.rootIndex].set(value); }
 
     octaveOffset { ^i_parameters[cv_parameterNames.octaveOffset].value }
     octaveOffset_ { |value| i_parameters[cv_parameterNames.octaveOffset].set(value); }
@@ -379,8 +384,8 @@ HarmonySequencer {
     globalOffset { ^i_parameters[cv_parameterNames.globalOffset].value }
     globalOffset_ { |value| i_parameters[cv_parameterNames.globalOffset].set(value); }
 
-    quantizedOffset { ^i_parameters[cv_parameterNames.quantizedOffsetIndex].value }
-    quantizedOffset_ { |value| i_parameters[cv_parameterNames.quantizedOffsetIndex].set(value); }
+    quantizedOffsetIndex { ^i_parameters[cv_parameterNames.quantizedOffsetIndex].value }
+    quantizedOffsetIndex_ { |value| i_parameters[cv_parameterNames.quantizedOffsetIndex].set(value); }
 
     fineOffset { ^i_parameters[cv_parameterNames.fineOffset].value }
     fineOffset_ { |value| i_parameters[cv_parameterNames.fineOffset].set(value); }
@@ -418,9 +423,10 @@ HarmonySequencer {
     /** Update notes bus */
     prUpdateNotesBus{
         var notes = this.activePointCount.collect({ |i|
-            var note = this.root + cv_scales[this.scaleIndex].performDegreeToKey(i);
+            // Note root index matches the semitone value so no need to look it up
+            var note = this.rootIndex + cv_scales[this.scaleIndex].performDegreeToKey(i);
             note = note.wrap(this.lowNote, this.highNote);
-            note = (cv_scales[this.scaleIndex].semitones + this.root).performNearestInScale(note); // Quantize to scale with given root
+            note = (cv_scales[this.scaleIndex].semitones + this.rootIndex).performNearestInScale(note); // Quantize to scale with given root
             note + (12 * this.octaveOffset)
         });
         i_notesBus.setnSynchronous(notes);
@@ -597,10 +603,10 @@ HarmonySequencer {
             cv_parameterNames.bpm, (label: "BPM", view: NumberBox().step_(1).scroll_step_(1).clipLo_(1).value_(this.bpm).action_({ |view| this.bpm_(view.value) })),
             cv_parameterNames.loopLength, (label: "Loop length", view: NumberBox().step_(1).scroll_step_(1).clipLo_(0.001).value_(this.loopLength).action_({ |view| this.loopLength_(view.value) })),
             cv_parameterNames.scaleIndex, (label: "Scale", view: PopUpMenu().items_(cv_scaleLabels).value_(this.scaleIndex).action_({ |view| this.scaleIndex_(view.value) })),
-            cv_parameterNames.rootIndex, (label: "Root", view: PopUpMenu().items_(cv_rootLabels).value_(this.root).action_({ |view| this.root_(view.value) })),
+            cv_parameterNames.rootIndex, (label: "RootIndex", view: PopUpMenu().items_(cv_rootLabels).value_(this.rootIndex).action_({ |view| this.rootIndex_(view.value) })),
             cv_parameterNames.octaveOffset, (label: "Octave offset", view: NumberBox().step_(1).scroll_step_(1).clipLo_(-2).clipHi_(2).value_(this.octaveOffset).action_({ |view| this.octaveOffset_(view.value) })),
             cv_parameterNames.globalOffset, (label: "Global offset", view: NumberBox().step_(0.01).scroll_step_(0.01).value_(this.globalOffset).action_({ |view| this.globalOffset_(view.value) })),
-            cv_parameterNames.quantizedOffsetIndex, (label: "Quantized offset", view: PopUpMenu().items_(cv_quantizedLabels).value_(this.quantizedOffset).action_({ |view| this.quantizedOffset_(view.value) })),
+            cv_parameterNames.quantizedOffsetIndex, (label: "Quantized offset", view: PopUpMenu().items_(cv_quantizedLabels).value_(this.quantizedOffsetIndex).action_({ |view| this.quantizedOffsetIndex_(view.value) })),
             cv_parameterNames.fineOffset, (label: "Fine offset", view: NumberBox().step_(0.01).scroll_step_(0.01).value_(this.fineOffset).action_({ |view| this.fineOffset_(view.value) })),
             cv_parameterNames.fineOffsetJitterAmount, (label: "Fine offset jitter amount", view: NumberBox().step_(0.01).scroll_step_(0.01).value_(this.fineOffsetJitterAmount).action_({ |view| this.fineOffsetJitterAmount_(view.value) })),
             cv_parameterNames.fineOffsetJitterFrequency, (label: "Fine offset jitter frequency", view: NumberBox().step_(0.01).scroll_step_(0.01).value_(this.fineOffsetJitterFrequency).action_({ |view| this.fineOffsetJitterFrequency_(view.value) })),
@@ -619,7 +625,7 @@ HarmonySequencer {
     prRegisterControlsWithParameters {
         i_parameters.keysValuesDo { |key, parameter|
             var control = i_parameterUiControls[key];
-            if (control.notNil) { parameter.register(c_controlParameterRegisterKey, { |value| control.view.value_(value) }) };
+            if (control.notNil) { parameter.register(c_controlParameterRegisterKey, { |value| defer { control.view.value_(value) } }) };
         }
     }
 

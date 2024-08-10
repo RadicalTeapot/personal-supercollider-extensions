@@ -40,6 +40,13 @@ Key used to store the action. If key is already registered, it will overwrite th
 ARGUMENT:: action
 Action to be executed when the setter is called, it should take a value as an argument.
 
+METHOD:: setWithoutNotify
+ARGUMENT:: val
+Set the parameter value without notifying the internal link::Classes/Observer##Observer::.
+
+METHOD:: notify
+Notify the internal link::Classes/Observer##Observer::.
+
 COPYMETHOD:: Observer -unregister
 
 EXAMPLES::
