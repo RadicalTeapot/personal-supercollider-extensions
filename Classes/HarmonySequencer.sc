@@ -1,8 +1,10 @@
 // TODO
-// Add velocity (ramp up, ramp down, set value, randomize) output with note value in OSC event
-// Add randomize and lock controls for most parameters
+// Disable velocity max when in constant mode (using parameter observer)
+// Test velocity output for each mode
+// Make window larger and display controls in 2 columns
 // Add notes from chords controls
 // Add control to rotate note assignment to points
+// Add randomize and lock controls for most parameters
 // Implement presets
 // Write docs
 HarmonySequencer {
@@ -26,6 +28,7 @@ HarmonySequencer {
     classvar cv_rootLabels;
     classvar cv_presets;
     classvar cv_parameterNames;
+    classvar cv_velocityModeLabels;
 
     var i_debugMode;
     var i_window;
@@ -38,6 +41,7 @@ HarmonySequencer {
     var i_pointsSynth;
     var i_pointsBus;
     var i_notesBus;
+    var i_velocityBus;
     var i_synthClearRoutine;
     var i_currentTriggerSynths = #[];
     var i_synthsToClear = #[];
@@ -50,8 +54,9 @@ HarmonySequencer {
         cv_quantizedValues = [0, 1/16, 1/8, 1/4, 1/2, 1.5/16, 1.5/8, 1.5/4, 1.5/2];
         cv_quantizedLabels = ["None", "16th", "8th", "Quarter", "Half", "Dotted 16th", "Dotted 8th", "Dotted quarter", "Dotted half"];
         cv_scales = [Scale.chromatic, Scale.majorPentatonic, Scale.minorPentatonic, Scale.ionian, Scale.dorian, Scale.phrygian, Scale.lydian, Scale.mixolydian, Scale.aeolian, Scale.locrian];
-        cv_scaleLabels = ["chromatic", "minorPentatonic", "majorPentatonic", "ionian", "dorian", "phrygian", "lydian", "mixolydian", "aeolian", "locrian"];
+        cv_scaleLabels = ["Chromatic", "Minor Pentatonic", "Major Pentatonic", "Ionian", "Dorian", "Phrygian", "Lydian", "Mixolydian", "Aeolian", "Locrian"];
         cv_rootLabels = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+        cv_velocityModeLabels = ["Constant", "Random", "Static Random", "Ramp Up", "Ramp Down"];
         cv_presets = Dictionary.newFrom([
             default: [8, [true, false, false, false, false, false, false, false], ]
         ]);
@@ -76,6 +81,9 @@ HarmonySequencer {
             lowNote: \lowNote,
             highNote: \highNote,
             paused: \paused,
+            velocityModeIndex: \velocityModeIndex,
+            velocityMin: \velocityMin,
+            velocityMax: \velocityMax,
         );
         ^super.new.init(server, debug);
     }
@@ -106,6 +114,7 @@ HarmonySequencer {
         });
 
         i_notesBus = Bus.control(i_server, c_maxPointCount);
+        i_velocityBus = Bus.control(i_server, c_maxPointCount);
         this.prInitializePointsSynth();
         this.registerPointTriggerAction({ |pointIdx, note|
             i_pointsTriggerState[pointIdx] = 1.0;
@@ -174,7 +183,11 @@ HarmonySequencer {
         var speedOffsetJitterFrequency = DebouncedObservableParameter(0, rate: c_debounceTime).register(c_parameterRegisterKey, { |value|
             i_server.bind{ i_pointsSynth.set(\speedOffsetJitterFrequency, value) }
         });
-        var activePointCount = getParameterWithIntSpec.(0, ControlSpec(1, c_maxPointCount, step: 1), rate: c_longDebounceTime).register(c_parameterRegisterKey, { this.prUpdateNotesBus(); this.prRefreshTriggerSynths() });
+        var activePointCount = getParameterWithIntSpec.(0, ControlSpec(1, c_maxPointCount, step: 1), rate: c_longDebounceTime).register(c_parameterRegisterKey, { 
+            this.prUpdateNotesBus(); 
+            this.prRefreshTriggerSynths();
+            this.prUpdateVelocityBus();
+        });
         var probability = { 
             var spec = ControlSpec(0.0, 1.0, step: 0.001); 
             DebouncedObservableParameter(0, set: { |value| spec.constrain(value) }, rate: c_debounceTime)
@@ -186,7 +199,15 @@ HarmonySequencer {
         var paused = DebouncedObservableParameter(false, rate: c_debounceTime).register(c_parameterRegisterKey, { |value|
           i_server.bind { i_pointsSynth.set(\paused, if (value, 1, 0)) }
         });
-
+        var velocityModeIndex = getParameterWithIntSpec.(0, ControlSpec(0, cv_velocityModeLabels.size - 1, step: 1)).register(c_parameterRegisterKey, { this.prUpdateVelocityBus() });
+        var velocityMin = getParameterWithIntSpec.(0, ControlSpec(1, 127, step: 1), rate: c_debounceTime).register(c_parameterRegisterKey, { |value|
+            this.prUpdateNotesBus(); 
+            i_server.bind { i_currentTriggerSynths.do { |synth| synth.set(\velocityMin, value) } } 
+        });
+        var velocityMax = getParameterWithIntSpec.(0, ControlSpec(1, 127, step: 1), rate: c_debounceTime).register(c_parameterRegisterKey, { |value|
+            this.prUpdateNotesBus(); 
+            i_server.bind { i_currentTriggerSynths.do { |synth| synth.set(\velocityMax, value) } } 
+        });
 
         i_parameters = IdentityDictionary.newFrom([
             cv_parameterNames.triggerCount, triggerCount,
@@ -209,6 +230,9 @@ HarmonySequencer {
             cv_parameterNames.lowNote, lowNote,
             cv_parameterNames.highNote, highNote,
             cv_parameterNames.paused, paused,
+            cv_parameterNames.velocityModeIndex, velocityModeIndex,
+            cv_parameterNames.velocityMin, velocityMin,
+            cv_parameterNames.velocityMax, velocityMax,
         ]);
 
         this.prDebugPrint("Done initializing parameters");
@@ -218,7 +242,7 @@ HarmonySequencer {
         |triggerCount=8, triggers=#[true], bpm=110, loopLength=1, scaleIndex=0, rootIndex=0, octaveOffset=0, globalOffset=0,
         quantizedOffsetIndex=0, fineOffset=0, fineOffsetJitterAmount=0, fineOffsetJitterFrequency=1, speedOffset=0,
         speedOffsetJitterAmount=0, speedOffsetJitterFrequency=1, activePointCount=8, probability=1, lowNote=0,
-        highNote=127, paused=false|
+        highNote=127, paused=false, velocityModeIndex=0, velocityMin=64, velocityMax=100|
         i_parameters[cv_parameterNames.triggerCount].setWithoutNotify(triggerCount);
         i_parameters[cv_parameterNames.triggers].setWithoutNotify(triggers);
         i_parameters[cv_parameterNames.bpm].setWithoutNotify(bpm);
@@ -239,6 +263,9 @@ HarmonySequencer {
         i_parameters[cv_parameterNames.lowNote].setWithoutNotify(lowNote);
         i_parameters[cv_parameterNames.highNote].setWithoutNotify(highNote);
         i_parameters[cv_parameterNames.paused].setWithoutNotify(paused);
+        i_parameters[cv_parameterNames.velocityModeIndex].setWithoutNotify(velocityModeIndex);
+        i_parameters[cv_parameterNames.velocityMin].setWithoutNotify(velocityMin);
+        i_parameters[cv_parameterNames.velocityMax].setWithoutNotify(velocityMax);
 
         i_parameters.do { |param| param.notify };
 
@@ -304,22 +331,26 @@ HarmonySequencer {
             if (activePointCount == 1)
             {
                 SynthDef(synthName, {
-                    var note = i_notesBus.kr(1);
                     var point = i_pointsBus.kr(1); // Doesn't work for 1 element (doesn't return an array)
+                    var note = i_notesBus.kr(1);
+                    var velocity = i_velocityBus.kr(1);
                     // NOTE: Use Changed and PulseCount to avoid all points triggering when SynthDef is created
                     var trigger = Changed.kr(PulseCount.kr(point - \offset.kr(0)));
                     var prob = TRand.kr(trig: trigger) <= \probability.kr(1);
-                    SendReply.kr(trigger*prob, c_updatePointsTriggeredStateOscPath, [0, note]);
+                    velocity = Select.kr(velocity >= 1, [TIRand.kr(\velocityMin.kr(1), \velocityMax.kr(127), trigger), velocity]);
+                    SendReply.kr(trigger*prob, c_updatePointsTriggeredStateOscPath, [0, note, velocity]);
                 }).add;
             } {
                 SynthDef(synthName, {
-                    var notes = i_notesBus.kr(activePointCount);
                     var points = i_pointsBus.kr(activePointCount);
+                    var notes = i_notesBus.kr(activePointCount);
+                    var velocities = i_notesBus.kr(activePointCount);
                     points.do { |point, i|
                         // NOTE: Use Changed and PulseCount to avoid all points triggering when SynthDef is created
                         var trigger = Changed.kr(PulseCount.kr(point - \offset.kr(0)));
                         var prob = TRand.kr(trig: trigger) <= \probability.kr(1);
-                        SendReply.kr(trigger*prob, c_updatePointsTriggeredStateOscPath, [i, notes[i]]);
+                        var velocity = Select.kr(velocities[i] >= 1, [TIRand.kr(\velocityMin.kr(1), \velocityMax.kr(127), trigger), velocities[i]]);
+                        SendReply.kr(trigger*prob, c_updatePointsTriggeredStateOscPath, [i, notes[i], velocity]);
                     };
                 }).add;
             };
@@ -420,8 +451,17 @@ HarmonySequencer {
     paused { ^i_parameters[cv_parameterNames.paused].value }
     paused_ { |value| i_parameters[cv_parameterNames.paused].set(value); }
 
+    velocityModeIndex { ^i_parameters[cv_parameterNames.velocityModeIndex].value }
+    velocityModeIndex_ { |value| i_parameters[cv_parameterNames.velocityModeIndex].set(value); }
+
+    velocityMin { ^i_parameters[cv_parameterNames.velocityMin].value }
+    velocityMin_ { |value| i_parameters[cv_parameterNames.velocityMin].set(value); }
+
+    velocityMax { ^i_parameters[cv_parameterNames.velocityMax].value }
+    velocityMax_ { |value| i_parameters[cv_parameterNames.velocityMax].set(value); }
+
     /** Update notes bus */
-    prUpdateNotesBus{
+    prUpdateNotesBus {
         var notes = this.activePointCount.collect({ |i|
             // Note root index matches the semitone value so no need to look it up
             var note = this.rootIndex + cv_scales[this.scaleIndex].performDegreeToKey(i);
@@ -430,6 +470,19 @@ HarmonySequencer {
             note + (12 * this.octaveOffset)
         });
         i_notesBus.setnSynchronous(notes);
+    }
+
+    /** Update velocity bus */
+    prUpdateVelocityBus {
+      // ["Constant", "Random", "Static Random", "Ramp Up", "Ramp Down"];
+      var velocities = this.activePointCount.collect({ |i|
+          switch(this.velocityModeIndex)
+          {0} { this.velocityMin }  // Constant
+          {1} { -1 }  // Random
+          {2} { rrand(this.velocityMin.min(this.velocityMax), this.velocityMax.max(this.velocityMin)+1) }  // Static random
+          {3} { i % abs(this.velocityMax - this.velocityMin) + this.velocityMin.min(this.velocityMax) }  // Ramp up
+          {4} { (this.activePointCount+1-i) % abs(this.velocityMax - this.velocityMin) + this.velocityMin.min(this.velocityMax) }; // Ramp down
+      });
     }
 
     gui { |refreshRate = 30, showAdvancedGUI = false|
@@ -509,6 +562,9 @@ HarmonySequencer {
                 this.prGetControlGridRow(cv_parameterNames.triggerCount),
                 this.prGetControlGridRow(cv_parameterNames.lowNote),
                 this.prGetControlGridRow(cv_parameterNames.highNote),
+                this.prGetControlGridRow(cv_parameterNames.velocityModeIndex),
+                this.prGetControlGridRow(cv_parameterNames.velocityMin),
+                this.prGetControlGridRow(cv_parameterNames.velocityMax),
             ];
 
             if (showAdvancedGUI) {
@@ -618,6 +674,9 @@ HarmonySequencer {
             cv_parameterNames.triggerCount, (label: "Trigger count", view: NumberBox().step_(1).scroll_step_(1).clipLo_(1).clipHi_(c_maxTriggerCount).value_(this.triggerCount).action_({ |view| this.triggerCount_(view.value) })),
             cv_parameterNames.lowNote, (label: "Low note", view: lowNoteControl),
             cv_parameterNames.highNote, (label: "High note", view: highNoteControl),
+            cv_parameterNames.velocityModeIndex, (label: "Velocity mode", view: PopUpMenu().items_(cv_velocityModeLabels).value_(this.velocityModeIndex).action_({ |view| this.velocityModeIndex_(view.value) })),
+            cv_parameterNames.velocityMin, (label: "Velocity min", view: NumberBox().step_(1).scroll_step_(1).clipLo_(1).clipHi_(127).value_(this.velocityMin).action_({ |view| this.velocityMin_(view.value) })),
+            cv_parameterNames.velocityMax, (label: "Velocity max", view: NumberBox().step_(1).scroll_step_(1).clipLo_(1).clipHi_(127).value_(this.velocityMax).action_({ |view| this.velocityMax_(view.value) })),
         ]);
     }
 
