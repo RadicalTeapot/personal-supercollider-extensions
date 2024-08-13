@@ -201,11 +201,11 @@ HarmonySequencer {
         });
         var velocityModeIndex = getParameterWithIntSpec.(0, ControlSpec(0, cv_velocityModeLabels.size - 1, step: 1)).register(c_parameterRegisterKey, { this.prUpdateVelocityBus() });
         var velocityMin = getParameterWithIntSpec.(0, ControlSpec(1, 127, step: 1), rate: c_debounceTime).register(c_parameterRegisterKey, { |value|
-            this.prUpdateNotesBus(); 
+            this.prUpdateVelocityBus(); 
             i_server.bind { i_currentTriggerSynths.do { |synth| synth.set(\velocityMin, value) } } 
         });
         var velocityMax = getParameterWithIntSpec.(0, ControlSpec(1, 127, step: 1), rate: c_debounceTime).register(c_parameterRegisterKey, { |value|
-            this.prUpdateNotesBus(); 
+            this.prUpdateVelocityBus(); 
             i_server.bind { i_currentTriggerSynths.do { |synth| synth.set(\velocityMax, value) } } 
         });
 
@@ -344,7 +344,7 @@ HarmonySequencer {
                 SynthDef(synthName, {
                     var points = i_pointsBus.kr(activePointCount);
                     var notes = i_notesBus.kr(activePointCount);
-                    var velocities = i_notesBus.kr(activePointCount);
+                    var velocities = i_velocityBus.kr(activePointCount);
                     points.do { |point, i|
                         // NOTE: Use Changed and PulseCount to avoid all points triggering when SynthDef is created
                         var trigger = Changed.kr(PulseCount.kr(point - \offset.kr(0)));
@@ -385,7 +385,8 @@ HarmonySequencer {
         i_oscFuncs = i_oscFuncs.add(OSCFunc({ |msg|
             var pointIdx = msg[3];
             var note = msg[4];
-            action.(pointIdx, note);
+            var velocity = msg[5];
+            action.(pointIdx, note, velocity);
         }, c_updatePointsTriggeredStateOscPath));
 
         this.prDebugPrint("Action registered");
@@ -476,13 +477,20 @@ HarmonySequencer {
     prUpdateVelocityBus {
       // ["Constant", "Random", "Static Random", "Ramp Up", "Ramp Down"];
       var velocities = this.activePointCount.collect({ |i|
-          switch(this.velocityModeIndex)
-          {0} { this.velocityMin }  // Constant
-          {1} { -1 }  // Random
-          {2} { rrand(this.velocityMin.min(this.velocityMax), this.velocityMax.max(this.velocityMin)+1) }  // Static random
-          {3} { i % abs(this.velocityMax - this.velocityMin) + this.velocityMin.min(this.velocityMax) }  // Ramp up
-          {4} { (this.activePointCount+1-i) % abs(this.velocityMax - this.velocityMin) + this.velocityMin.min(this.velocityMax) }; // Ramp down
+          var value = 0;
+
+          var mode = this.velocityModeIndex;
+          switch(mode)
+          {0} { value = this.velocityMin }  // Constant
+          {1} { value = -1 }  // Random
+          {2} { value = rrand(this.velocityMin.min(this.velocityMax), this.velocityMax.max(this.velocityMin)+1) }  // Static random
+          {3} { value = i % abs(this.velocityMax - this.velocityMin) + this.velocityMin.min(this.velocityMax) }  // Ramp up
+          {4} { value = (this.activePointCount+1-i) % abs(this.velocityMax - this.velocityMin) + this.velocityMin.min(this.velocityMax) }; // Ramp down
+          { ("Invalid velocity mode index"+this.velocityModeIndex).error };
+
+          value;
       });
+      i_velocityBus.setnSynchronous(velocities);
     }
 
     gui { |refreshRate = 30, showAdvancedGUI = false|
